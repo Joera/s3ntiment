@@ -1,7 +1,7 @@
-import { parseAbi, recoverMessageAddress, Signature } from "viem";
-import { compactAction, createSurveyCollectionSchema,  encryptAction, EncryptedConfig, getDecryptForOwnerAction, getDecryptForRespondentAction, getSimpleDecrypt, isScored, Survey } from "@s3ntiment/shared";
+import { createSurveyAggregationQuery, createSurveyCollectionSchema, EncryptedConfig, fetchSurveyAndParseCid, isScored, PoolConfig, withRetry } from "@s3ntiment/shared";
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
 import { calculateScore, stripScoring } from "@s3ntiment/shared";
+import { NillionPkpClient } from "./services/nildb.pkp.service.js";
 
 export class SurveyController {
     private nildb: any;
@@ -18,29 +18,35 @@ export class SurveyController {
         this.viem = viem;
     }
 
-    // separate pool and survey ??? 
-
     // Authorization is enforced on-chain: for new pools, the caller becomes the owner;
     // for existing pools, the contract reverts if msg.sender != pool.safe.
     async create(body: any) {
 
-        const { surveyConfig } = body;
+        const contract = surveyStore.address;
+        const { signature, userAddress, surveyConfig } = body;
+        const { pkpId, pkpDid } = surveyConfig.config;
 
-        const pkpId = "0x7598155069ba02e7dd87afc0c2b5e587b34b2379";
-
-        let usage_api_key = await this.litPoolKeys.get(surveyConfig.pool)
-
-
-        if (usage_api_key == undefined) {
-            usage_api_key = "MCKlyMki/vKi2YvpWRoEmdROU+YFSR/aVNQJj9iVbEE=";
-        }
+        const usage_api_key = await this.litPoolKeys.get(surveyConfig.pool)
 
         const { safeConfigWithScoring, safeConfig, scoring } = stripScoring(surveyConfig)
         const _isScored = isScored(surveyConfig.groups);
-        const rawSchema = createSurveyCollectionSchema(safeConfig, "standard")
-        const collectionId = await this.nildb.createSurveyCollection(surveyConfig.id, rawSchema, this.nildb.builderDid.didString);
+        const rawSchema = createSurveyCollectionSchema(safeConfig, "owned")
 
-        // put this inside lit action
+        const nillPkp = new NillionPkpClient(this.lit, surveyConfig.pool, surveyConfig.config.safe, contract)
+        const collectionResponse = await nillPkp.createCollection(signature, userAddress, pkpId, pkpDid, usage_api_key, rawSchema);
+        console.log("collectionResponse", collectionResponse);
+
+        // await nillPkp.getCollection(pkpId, pkpDid, usage_api_key, surveyConfig.id) 
+        // const collections = await nillPkp.listCollections(pkpId, pkpDid, usage_api_key);
+        // console.log('Existing collections:', collections);
+
+
+        // Create aggregation query
+        const queryDef = createSurveyAggregationQuery(surveyConfig.id, surveyConfig.groups);
+        const queryResponse = await nillPkp.createQuery(signature, userAddress, pkpId, pkpDid, usage_api_key, queryDef);
+
+        surveyConfig.config.queryIds = [queryDef._id];
+
         const [ encryptedForOwner, encryptedForRespondent] = await Promise.all([
             this.lit.encrypt(usage_api_key, pkpId, JSON.stringify(safeConfigWithScoring)),
             this.lit.encrypt(usage_api_key, pkpId, JSON.stringify(safeConfig))
@@ -49,13 +55,11 @@ export class SurveyController {
         const encryptedScoring = this.nildb.encryptToBuilder({scoring: scoring, groups: surveyConfig.groups});
 
         const config: EncryptedConfig = {
-            surveyId: collectionId,
-            poolId: surveyConfig.pool,
+            ...surveyConfig,
             nilDid: this.nildb.builderDid.didString,
             encryptedForOwner,
             encryptedForRespondent,
             encryptedScoring,
-            config: surveyConfig.config,
             isScored: _isScored
         }
 
@@ -66,28 +70,28 @@ export class SurveyController {
     // for existing pools, the contract reverts if msg.sender != pool.safe.
     async update(body: any) {
 
-        const { surveyConfig } = body;
+        const { survey , poolConfig } = body;
 
-        const usage_api_key = await this.litPoolKeys.get(surveyConfig.pool)
+        const usage_api_key = await this.litPoolKeys.get(survey.pool)
 
-        const { safeConfigWithScoring, safeConfig, scoring } = stripScoring(surveyConfig);
-        const _isScored = isScored(surveyConfig.groups);
+        const { safeConfigWithScoring, safeConfig, scoring } = stripScoring(survey);
+        const _isScored = isScored(survey.groups);
 
         const [ encryptedForOwner, encryptedForRespondent] = await Promise.all([
-            this.lit.encrypt(usage_api_key, surveyConfig.config.pkpId, JSON.stringify(safeConfigWithScoring)),
-            this.lit.encrypt(usage_api_key, surveyConfig.config.pkpId, JSON.stringify(safeConfig))
+            this.lit.encrypt(usage_api_key, poolConfig.pkpId, JSON.stringify(safeConfigWithScoring)),
+            this.lit.encrypt(usage_api_key, poolConfig.pkpId, JSON.stringify(safeConfig))
         ])
 
-        const encryptedScoring = this.nildb.encryptToBuilder({scoring: scoring, groups: surveyConfig.groups});
+        const encryptedScoring = this.nildb.encryptToBuilder({scoring: scoring, groups: survey.groups});
 
         const config: EncryptedConfig = {
-            surveyId: surveyConfig.id,
-            poolId: surveyConfig.pool,
+            surveyId: survey.id,
+            poolId: survey.pool,
             nilDid: this.nildb.builderDid.didString,
             encryptedForOwner,
             encryptedForRespondent,
             encryptedScoring,
-            config: surveyConfig.config,
+            queryIds: survey.queryIds,
             isScored: _isScored
         }
 
@@ -159,54 +163,18 @@ export class SurveyController {
        }
     }
 
-    // async verifyPoolOwner(signature: `0x${string}`, poolId: string, contract: `0x${string}`, safeAddress: `0x${string}`): Promise<string | null> {
+    async getUserDelegation(signature: string, userAddress: string, poolId: string, poolConfig: PoolConfig, surveyId: string, userDid: string, ) {
 
-    //     const signerAddress = await this.viem.verifyMessage('create a s3ntiment survey', signature);
+        const deployment = {
+            address: surveyStore.address,
+            abi: surveyStore.abi
+        }
 
-    //     console.log("SIGNER", signerAddress)
-    //     console.log("SAFE", safeAddress)
-    //     console.log("POOLID", poolId)
-        
-    //     const isPoolSafe = await this.viem.read(
-    //         contract, 
-    //         parseAbi(['function isPoolSafe(address addr, string poolId) view returns (bool)']),
-    //         'isPoolSafe', 
-    //         [safeAddress, poolId]
-    //     );
+        const contract = surveyStore.address;
+        const usageKey = await this.litPoolKeys.get(poolId);
+        const survey = await fetchSurveyAndParseCid( { viem: this.viem, ipfs: this.ipfs }, deployment, surveyId)
 
-    //     console.log("ISPOOLSAFE", isPoolSafe)
-        
-    //     if (!isPoolSafe) return null;
-
-    //     const isOwner = await this.viem.read(
-    //         safeAddress,
-    //         parseAbi(['function isOwner(address owner) view returns (bool)']),
-    //         'isOwner',
-    //         [signerAddress]
-    //     );
-
-    //     console.log("ISOWNER", isOwner)
-
-    //     if (!isOwner) return null;
-
-    //     return signerAddress;
-    // }
-
-    // async verifyOwnership(
-    //     surveyOwnerAddress: string,
-    //     requestorDid: string,
-    //     message: string,
-    //     signature: Signature
-    // ): Promise<boolean> {
-    //     // Verify signature matches survey owner
-    //     const recoveredAddress = await recoverMessageAddress({ message, signature });
-        
-    //     if (recoveredAddress.toLowerCase() !== surveyOwnerAddress.toLowerCase()) {
-    //         return false;
-    //     }
-
-    //     // Verify the DID in message matches requestor
-    //     const expectedMessage = `Request delegation for ${requestorDid}`;
-    //     return message === expectedMessage;
-    // }
+        const nillPkp = new NillionPkpClient(this.lit, survey.poolId, poolConfig.safe!, contract)
+        return await nillPkp.getUserWriteDelegation(signature, userAddress, surveyId, userDid, poolId, usageKey, poolConfig.pkpId!, poolConfig.pkpDid!);
+    }
 }

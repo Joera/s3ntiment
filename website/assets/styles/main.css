@@ -2,60 +2,240 @@
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 400;
-  src: url('../../../shared/src/assets/fonts/monaspace-neon-latin-400-normal.ttf') format("truetype");
+  src: url("/assets/fonts/monaspace-neon-latin-400-normal.ttf") format("truetype");
 }
 @font-face {
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 500;
-  src: url("../../../shared/src/assets/fonts/monaspace-neon-latin-500-normal.ttf") format("truetype");
+  src: url("/assets/fonts/monaspace-neon-latin-500-normal.ttf") format("truetype");
 }
 @font-face {
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 600;
-  src: url("../../../shared/src/assets/fonts/monaspace-neon-latin-600-normal.ttf") format("truetype");
+  src: url("/assets/fonts/monaspace-neon-latin-600-normal.ttf") format("truetype");
 }
 @font-face {
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 700;
-  src: url("../../../shared/src/assets/fonts/monaspace-neon-latin-700-normal.ttf") format("truetype");
+  src: url("/assets/fonts/monaspace-neon-latin-700-normal.ttf") format("truetype");
 }
 @font-face {
   font-family: "Cormorant Garamond";
   font-weight: 700;
-  src: url("../../../shared/src/assets/fonts/CormorantGaramond-Bold.ttf") format("truetype");
+  src: url("/assets/fonts/CormorantGaramond-Bold.ttf") format("truetype");
 }
 @font-face {
   font-family: "Oswald";
   font-weight: 700;
-  src: url("../../../shared/src/assets/fonts/Oswald-Bold.ttf") format("truetype");
+  src: url("/assets/fonts/Oswald-Bold.ttf") format("truetype");
 }
 @font-face {
   font-family: "Oswald";
   font-weight: 600;
-  src: url("../../../shared/src/assets/fonts/Oswald-SemiBold.ttf") format("truetype");
+  src: url("/assets/fonts/Oswald-SemiBold.ttf") format("truetype");
 }
 @font-face {
   font-family: "Oswald";
   font-weight: 500;
-  src: url("../../../shared/src/assets/fonts/Oswald-Regular.ttf") format("truetype");
+  src: url("/assets/fonts/Oswald-Regular.ttf") format("truetype");
 }
-header {
+@font-face {
+  font-family: "Lato";
+  font-weight: 500;
+  src: url("/assets/fonts/Lato/Lato-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Nunito_Sans";
+  font-weight: 500;
+  src: url("/assets/fonts/Nunito_Sans/NunitoSans-VariableFont_YTLC,opsz,wdth,wght.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Open_Sans";
+  font-weight: 500;
+  src: url("/assets/fonts/Open_Sans/OpenSans-VariableFont_wdth,wght.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Source_Sans";
+  font-weight: 500;
+  src: url("/assets/fonts/Source_Sans_3/SourceSans3-VariableFont_wght.ttf") format("truetype");
+}
+p {
+  font-family: "Lato";
+  font-family: "Nunito_Sans";
+  font-family: "Open_Sans";
+  font-family: "Source_Sans";
+}
+
+.container-large {
+  max-width: 1200px;
+}
+
+.container-small {
+  max-width: 900px;
+}
+
+.container-smaller {
+  max-width: 690px;
+}
+
+.flex-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: top;
+}
+.flex-row > * {
+  flex: 1;
+}
+
+.flex-stretch {
+  align-items: stretch;
+}
+
+#app {
+  width: 100%;
+}
+
+h2.header {
+  align-self: center;
+  margin: 0 0 3rem 1.5rem;
+  font-size: 1rem;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 400;
+}
+
+#intro {
+  margin-top: 5rem;
+  height: calc(100vh - 5rem - 12rem);
+}
+
+#why, #how, #who {
+  margin-top: -1px;
+  padding: 3rem 0;
+  background: white;
+}
+
+#features {
+  background: white;
+  margin-top: -1px;
+}
+#features .container {
+  padding-bottom: 6rem;
+  justify-content: space-around;
+}
+#features .container > article {
+  max-width: 400px;
+}
+
+.intermezzo {
+  background: white;
+  padding: 3rem 0;
+  margin-top: -1px;
+}
+.intermezzo h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+  text-transform: uppercase;
+  color: #cd7c8d;
+  margin-left: 3rem;
+  max-width: 600px;
+  text-align: center;
+}
+
+#outro {
+  background: white;
+  height: 40vh;
+}
+#outro h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+}
+#outro button {
+  background-color: black;
+  margin-top: 3rem;
+  align-self: center;
+}
+
+.block {
   position: relative;
+  padding: 0 3rem 0 0;
+  display: flex;
+  flex-direction: column;
+}
+.block .circle {
+  position: absolute;
+  border-radius: 50%;
+  background: #F1DEE1;
+  width: 100%;
+  height: 100%;
+}
+.block .tag {
+  font-size: 1rem;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 400;
+}
+.block h3 {
+  position: relative;
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+}
+.block a {
+  position: relative;
+  color: #cd7c8d;
+  text-decoration: none;
+  border-bottom: 1px solid #cd7c8d;
+  align-self: flex-start;
+  color: #A8F3E3;
+}
+.block p {
+  position: relative;
+}
+.block:last-child {
+  padding-right: 0;
+}
+.block.centered {
+  padding: 3rem;
+}
+.block.centered p {
+  text-align: center;
+}
+
+header {
+  position: fixed;
   display: flex;
   flex-direction: row;
   justify-content: center;
   align-items: center;
   width: 100%;
+  background: white;
+  border-bottom: 1px solid #EDEFF0;
+  z-index: 99;
 }
 header svg#owl {
   position: absolute;
-  top: 2rem;
+  top: 1rem;
   left: 1.5rem;
   height: 4rem;
   width: auto;
+}
+header svg#owl path {
+  fill: #355C53;
 }
 header .container {
   position: relative;
@@ -67,6 +247,151 @@ header .container {
 }
 header nav ul li {
   padding: 0 0.75rem;
+}
+header h1 {
+  color: black;
+  margin: 0.75rem;
+}
+header h1 span {
+  color: #62A496;
+}
+
+#crowd {
+  position: fixed;
+  top: 5rem;
+  left: 0;
+  width: 100vw;
+  height: auto;
+}
+
+main {
+  position: relative;
+}
+
+#intro {
+  position: relative;
+}
+#intro svg {
+  position: absolute;
+  margin-top: 6rem;
+  width: 800px;
+  opacity: 0.8;
+}
+#intro svg path {
+  fill: black;
+}
+#intro svg {
+  display: none;
+}
+#intro article {
+  margin-top: 0rem;
+  position: relative;
+  padding: 1.5rem 11rem;
+}
+#intro h2 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+  font-size: 3.2rem;
+  line-height: 1.1;
+  color: #4C8175;
+  background: #EDEFF0;
+  padding: 1rem;
+  width: 100%;
+}
+#intro p {
+  text-align: left;
+  color: #191B1C;
+  font-size: 1.125rem;
+  margin-top: 0;
+  background: #EDEFF0;
+  padding: 0.25rem 1rem 1.5rem 1rem;
+}
+#intro button {
+  position: absolute;
+  bottom: 6rem;
+  align-self: center;
+  margin-top: 3rem;
+  color: #A8F3E3;
+  background: #355C53;
+}
+
+footer {
+  background: black;
+}
+
+#page {
+  margin-top: 5rem;
+  width: 100%;
+}
+#page #page-intro {
+  margin-top: 6rem;
+}
+#page #page-intro .tag {
+  font-size: 1rem;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 400;
+  margin-bottom: 0.25rem;
+}
+#page #page-intro h2 {
+  padding: 0;
+  margin: 0;
+  text-transform: uppercase;
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  letter-spacing: 1px;
+  color: #4C8175;
+  margin-bottom: 1.5rem;
+  font-size: 2.4rem;
+  line-height: 1.175;
+  text-transform: none;
+  letter-spacing: 0;
+}
+#page #main-image {
+  margin: 3rem auto 6rem auto;
+  background-color: #EDEFF0;
+}
+#page #main-image img {
+  width: 100%;
+  height: auto;
+}
+#page .paragraph h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+  color: #57212d;
+}
+#page .paragraph h4 {
+  font-size: 1rem;
+  padding: 0;
+  font-weight: 600;
+}
+#page .paragraph a {
+  color: #cd7c8d;
+  text-decoration: none;
+  border-bottom: 1px solid #cd7c8d;
+}
+#page #outro {
+  margin: 3rem 0;
+  background: #cd7c8d;
+  color: #57212d;
+  padding: 1.5rem;
+}
+#page #outro h3 {
+  margin-bottom: 1.5rem;
+}
+#page #outro ul {
+  margin: auto;
+  padding: 0;
+  list-style-type: disc;
 }
 
 /*# sourceMappingURL=main.css.map */

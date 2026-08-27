@@ -28,6 +28,6 @@ export const getDecryptForRespondentAction = (poolId: string, contract: string) 
     }
   
     const plaintext = await Lit.Actions.Decrypt({ pkpId, ciphertext });
-    return { plaintext };
+        return { plaintext };
     }
 `;

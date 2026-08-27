@@ -1,19 +1,28 @@
+@use '_colours' as *;
+
 header {
 
-    position: relative;
+    position: fixed;
     display: flex;
     flex-direction: row;
     justify-content: center;
     align-items: center;
     width: 100%;
+    background: white;
+    border-bottom: 1px solid $gray-lightest;
+    z-index: 99;
 
     svg#owl {
 
         position: absolute;
-        top: 2rem;
+        top: 1rem;
         left: 1.5rem;
         height: 4rem;
         width: auto;
+
+        path  {
+            fill: $teal-darkest;
+        }
         
     }
 
@@ -32,6 +41,17 @@ header {
 
         ul li {
             padding: 0 .75rem;
+        }
+    }
+
+    h1 {
+
+        color: black;
+        margin: 0.75rem;
+
+        
+        span {
+            color: $teal-dark;
         }
     }
 }

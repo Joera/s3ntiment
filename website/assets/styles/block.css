@@ -1,0 +1,57 @@
+p {
+  font-family: "Lato";
+  font-family: "Nunito_Sans";
+  font-family: "Open_Sans";
+  font-family: "Source_Sans";
+}
+
+.block {
+  position: relative;
+  padding: 0 3rem 0 0;
+  display: flex;
+  flex-direction: column;
+}
+.block .circle {
+  position: absolute;
+  border-radius: 50%;
+  background: #F1DEE1;
+  width: 100%;
+  height: 100%;
+}
+.block .tag {
+  font-size: 1rem;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 400;
+}
+.block h3 {
+  position: relative;
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+}
+.block a {
+  position: relative;
+  color: #cd7c8d;
+  text-decoration: none;
+  border-bottom: 1px solid #cd7c8d;
+  align-self: flex-start;
+  color: #A8F3E3;
+}
+.block p {
+  position: relative;
+}
+.block:last-child {
+  padding-right: 0;
+}
+.block.centered {
+  padding: 3rem;
+}
+.block.centered p {
+  text-align: center;
+}
+
+/*# sourceMappingURL=block.css.map */

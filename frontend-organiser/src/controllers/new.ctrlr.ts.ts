@@ -5,7 +5,7 @@ import { Batch, Survey } from '@s3ntiment/shared';
 import '../components/draft-survey-editor.js';
 import { createBatch } from '../factories/survey.factory.js';
 import { IServices } from '../services/services.js';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' }
+import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
 import { store } from '../state/store.js';
 import { router } from '../router.js';
 
@@ -51,9 +51,6 @@ export class NewSurveyController {
 
   private handleSurveySubmit = async (event: any) => {
 
-
-    store.setUI({ newStep: 'creating-pool' });
-
     const survey = event.detail.survey;
     console.log("ready to submit", survey)
 
@@ -71,33 +68,95 @@ export class NewSurveyController {
 
     console.log("safeAddress", safeAddress)
 
-    // HACK: reuse existing Lit setup for MTE pool instead of minting new PKP/group
-    // TODO: properly handle existing pools (fixed in newer version)
-    let pkpId: string;
-    let groupId: number;
+    const userAddress = this.services.safe.getSignerAddress();
+    const signature = await this.services.safe.signMessage("Request owner invocation")
 
-    if (poolId === '5f6b3f9b-5676-4927-b11a-0b1f02344cdf') {
-      pkpId = '0x7598155069ba02e7dd87afc0c2b5e587b34b2379';
-      groupId = 22;
-      console.log("Reusing existing pool Lit setup", { pkpId, groupId });
-    } else {
-      const poolResponse: any = await fetch(`${BACKENDURL}/api/pools`, {
+    if (isNewPool) {
+
+      store.setUI({ newStep: 'creating-pool' });
+
+      let poolResponse: any = await fetch(`${BACKENDURL}/api/pools`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ poolId, safeAddress })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({   
+          signature,
+          userAddress,
+          poolId,
+          safeAddress
+        })
       });
-      ({ pkpId, groupId } = await poolResponse.json());
-      console.log("POOL CREATED");
-    }
 
-    const config = {
-      safe: safeAddress,
-      // pkpId,
-      // groupId,
-      chainId: import.meta.env.VITE_L2 == 'base' ? 8453 : 1,
-      litNetwork: import.meta.env.VITE_LIT_NETWORK
-    }
+      if (!poolResponse.ok) store.setUI({ newStep: 'error' });
 
+      const { pkpId, pkpDid, groupId, delegation }  = await poolResponse.json();
+
+      // CREATE INVITES
+      store.setUI({ newStep: 'creating-invites' });
+
+      let batchIds = [];
+      survey.batches = await Promise.all(
+        survey.batches.map((batch: Batch) => createBatch(this.services, batch, poolId, surveyId))
+      );   
+      batchIds = survey.batches.map((b: Batch) => b.id);
+      console.log("BATCHES", survey.batches)
+
+        // CREATE INVITES
+      store.setUI({ newStep: 'register-pool' });
+
+      // register pool on chain .. so create collection can check ...
+      const args = [surveyId, poolId, "0", batchIds];
+      const res = await this.services.safe.write(surveyStore.address, surveyStore.abi, 'createSurvey', args, { waitForReceipt: true });
+      console.log("create pool tx", res.receipt?.status);
+
+      // register builder with nillion 
+      let builderResponse: any = await fetch(`${BACKENDURL}/api/builder/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({   
+          signature, 
+          userAddress, 
+          poolId, 
+          pkpId, 
+          pkpDid, 
+          safeAddress
+        })
+      });
+
+      if (!builderResponse.ok) console.log("builder registration failed") 
+
+      const config = {
+        safe: safeAddress,
+        chainId: import.meta.env.VITE_L2 == 'base' ? 8453 : 1,
+        litNetwork: import.meta.env.VITE_LIT_NETWORK,
+        pkpId, 
+        pkpDid, 
+        groupId
+      }
+      
+      store.addPool({
+            id: poolId,
+            name: survey.title ?? poolId,
+            safeAddress,
+            batches: survey.batches.map( (b:any) => b.id),
+            createdAt: Math.floor(Date.now() / 1000),
+            config
+        });
+   } 
+
+   // i want to move to adding surveys to existing pools .. as it takes too much time and becomes costly 
+   // pool interface needs to hold info pkpId etc  
+   // should it be in config? 
+   // store on nill db ?
+   // if i store on nill db // who is owner ? pkp ? // safe? 
+
+      
+    // CREATE SURVEY 
+    store.setUI({ newStep: 'creating-survey' });
+    
     const surveyConfig: Survey =  {
       id: surveyId,
       title: survey.title,
@@ -105,12 +164,10 @@ export class NewSurveyController {
       introduction: survey.introduction,
       groups: survey.groups,
       batches: survey.batches,
-      config
       // createdAt: BigInt(Math.floor(Date.now() / 1000))
     }
 
     console.log(surveyConfig)
-
 
     let surveyResponse: any = await fetch(`${BACKENDURL}/api/surveys`, {
       method: 'POST',
@@ -118,6 +175,8 @@ export class NewSurveyController {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({  
+        signature,
+        userAddress,
         surveyConfig
       })
     });
@@ -126,53 +185,20 @@ export class NewSurveyController {
 
     const { cid }  = await surveyResponse.json();
 
-    // run create survey in action 
-
     if (this.services.ipfs.isCID(cid)) {
 
-      let batchIds = [];
-
-      if (isNewPool) {
-        survey.batches = await Promise.all(
-          survey.batches.map((batch: Batch) => createBatch(this.services, batch, poolId, surveyId))
-        );
-        
-        batchIds = survey.batches.map((b: Batch) => b.id);
-      }
-
-      const args = [surveyId, poolId, cid.toString(), batchIds];
-      const res = await this.services.safe.write(surveyStore.address, surveyStore.abi, 'createSurvey', args, { waitForReceipt: true });
-      
-      // console.log(res);
-      console.log("Survey created", survey)
+      const args = [surveyId, cid.toString()];
+      const res = await this.services.safe.write(surveyStore.address, surveyStore.abi, 'updateSurvey', args, { waitForReceipt: true });
+      console.log("Survey updated")
 
       if (res.receipt?.status == "success") {
 
-        // if (isNewPool) {
-          // survey.batches = await Promise.all(
-          //   survey.batches.map((batch: Batch) => createInvitations(batch))
-          // );
-
-        surveyConfig.batches = survey.batches;
-        
         for (const batch of survey.batches) {
           store.addBatch(batch);
         }
-        // }
 
+        surveyConfig.batches = survey.batches;
         store.addSurvey(surveyConfig);
-
-        if (isNewPool) {
-          store.addPool({
-                id: poolId,
-                name: surveyConfig.title ?? poolId,
-                safeAddress,
-                batches: survey.batches.map( (b:any) => b.id),
-                createdAt: Math.floor(Date.now() / 1000)
-            });
-        }
-
-        console.log("ready")
 
         router.navigate(`/batch/${survey.batches[0].pool}/${survey.batches[0].id}`)
       }

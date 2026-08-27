@@ -1,0 +1,80 @@
+p {
+  font-family: "Lato";
+  font-family: "Nunito_Sans";
+  font-family: "Open_Sans";
+  font-family: "Source_Sans";
+}
+
+#app {
+  width: 100%;
+}
+
+h2.header {
+  align-self: center;
+  margin: 0 0 3rem 1.5rem;
+  font-size: 1rem;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 400;
+}
+
+#intro {
+  margin-top: 5rem;
+  height: calc(100vh - 5rem - 12rem);
+}
+
+#why, #how, #who {
+  margin-top: -1px;
+  padding: 3rem 0;
+  background: white;
+}
+
+#features {
+  background: white;
+  margin-top: -1px;
+}
+#features .container {
+  padding-bottom: 6rem;
+  justify-content: space-around;
+}
+#features .container > article {
+  max-width: 400px;
+}
+
+.intermezzo {
+  background: white;
+  padding: 3rem 0;
+  margin-top: -1px;
+}
+.intermezzo h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+  text-transform: uppercase;
+  color: #cd7c8d;
+  margin-left: 3rem;
+  max-width: 600px;
+  text-align: center;
+}
+
+#outro {
+  background: white;
+  height: 40vh;
+}
+#outro h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+}
+#outro button {
+  background-color: black;
+  margin-top: 3rem;
+  align-self: center;
+}
+
+/*# sourceMappingURL=sections.css.map */

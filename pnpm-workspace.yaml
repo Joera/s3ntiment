@@ -6,3 +6,21 @@ packages:
   - 'protocol'
   - 'nillcc-backend'
   - 'website'
+
+overrides:
+  '@lit-protocol/networks': 8.4.1
+  viem: 2.46.2
+  libsodium-sumo: 0.7.13
+  libsodium-wrappers-sumo: 0.7.13
+  '@nillion/nuc': ^2.0.1
+  '@nillion/secretvaults': ^3.0.0
+allowBuilds:
+  '@parcel/watcher': true
+  '@reown/appkit': true
+  '@swc/core': true
+  bufferutil: true
+  core-js: true
+  esbuild: true
+  hardhat-deploy: true
+  protobufjs: true
+  utf-8-validate: true

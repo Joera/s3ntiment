@@ -2,52 +2,77 @@
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 400;
-  src: url('../../../shared/src/assets/fonts/monaspace-neon-latin-400-normal.ttf') format("truetype");
+  src: url('/assets/fonts/monaspace-neon-latin-400-normal.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 500;
-  src: url('../../../shared/src/assets/fonts/monaspace-neon-latin-500-normal.ttf') format("truetype");
+  src: url('/assets/fonts/monaspace-neon-latin-500-normal.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 600;
-  src: url('../../../shared/src/assets/fonts/monaspace-neon-latin-600-normal.ttf') format("truetype");
+  src: url('/assets/fonts/monaspace-neon-latin-600-normal.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Monaspace Neon";
   font-style: normal;
   font-weight: 700;
-  src: url('../../../shared/src/assets/fonts/monaspace-neon-latin-700-normal.ttf') format("truetype");
+  src: url('/assets/fonts/monaspace-neon-latin-700-normal.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Cormorant Garamond";
   font-weight: 700;
-  src: url('../../../shared/src/assets/fonts/CormorantGaramond-Bold.ttf') format("truetype");
+  src: url('/assets/fonts/CormorantGaramond-Bold.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Oswald";
   font-weight: 700;
-  src: url('../../../shared/src/assets/fonts/Oswald-Bold.ttf') format("truetype");
+  src: url('/assets/fonts/Oswald-Bold.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Oswald";
   font-weight: 600;
-  src: url('../../../shared/src/assets/fonts/Oswald-SemiBold.ttf') format("truetype");
+  src: url('/assets/fonts/Oswald-SemiBold.ttf') format("truetype");
 }
 
 @font-face {
   font-family: "Oswald";
   font-weight: 500;
-  src: url('../../../shared/src/assets/fonts/Oswald-Regular.ttf') format("truetype");
+  src: url('/assets/fonts/Oswald-Regular.ttf') format("truetype");
 }
+
+@font-face {
+  font-family: "Lato";
+  font-weight: 500;
+  src: url('/assets/fonts/Lato/Lato-Regular.ttf') format("truetype");
+}
+
+@font-face {
+  font-family: "Nunito_Sans";
+  font-weight: 500;
+  src: url('/assets/fonts/Nunito_Sans/NunitoSans-VariableFont_YTLC,opsz,wdth,wght.ttf') format("truetype");
+}
+
+@font-face {
+  font-family: "Open_Sans";
+  font-weight: 500;
+  src: url('/assets/fonts/Open_Sans/OpenSans-VariableFont_wdth,wght.ttf') format("truetype");
+}
+
+@font-face {
+  font-family: "Source_Sans";
+  font-weight: 500;
+  src: url('/assets/fonts/Source_Sans_3/SourceSans3-VariableFont_wght.ttf') format("truetype");
+}
+
 
 

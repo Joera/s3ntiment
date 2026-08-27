@@ -2,16 +2,15 @@ import './env.js';  // must be first
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { NilDBBuilderService } from './services/nildb.builder.service.js';
-import { createPaymentDelegationAuthSig } from '@lit-protocol/auth-helpers';
 import { base } from 'viem/chains';
 
 import { SurveyController } from './survey.ctrlr.js';
 import { ViemService, LitService, IPFSMethods } from "@s3ntiment/shared";
 import {initStorage, LitPoolKeys } from "@s3ntiment/shared/node"
-import { Account, verifyMessage } from 'viem';
+import { verifyMessage } from 'viem';
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
-import { privateKeyToAccount } from 'viem/accounts';
 import { PoolController } from './pool.ctrlr.js';
+import { NillionPkpClient } from './services/nildb.pkp.service.js';
 
 // ====== APP SETUP ======
 
@@ -39,7 +38,7 @@ const lit = new LitService({
 await initStorage();
 const litPoolKeys = new LitPoolKeys()
 const ipfs = new IPFSMethods(KUBO_ENDPOINT, PINATA_JWT, PINATA_GATEWAY);
-const pool = new PoolController(lit, litPoolKeys)
+const pool = new PoolController(lit, litPoolKeys, nildb)
 const survey = new SurveyController(nildb, lit, litPoolKeys, ipfs, viem);
 await nildb.initBuilder();
 
@@ -123,63 +122,48 @@ router.put('/surveys/:id', async (req: Request, res: Response) => {
     }
 });
 
-// --- Participation ---
-
-// Request nilDB write delegation for a participant
-// Body: { didString, signature, signer }
-router.post('/surveys/:id/delegation', async (req: Request, res: Response) => {
-    try {
-        const { didString, surveyId } = req.body;
-        const delegation = await nildb.getUserWriteDelegation(didString, req.params.id);
-        res.json({ delegation });
-    } catch (error: any) {
-        console.error(error);
-        res.status(500).json({ error: 'DELEGATION_FAILED', detail: error.message });
-    }
-});
-
 // Submit survey answers
 // Body: { userData, signature, signer }
-router.post('/surveys/:id/submit', async (req: Request, res: Response) => {
-    try {
-        const { userData, signature, signer, poolId } = req.body;
-        const surveyId = req.params.id;
+// router.post('/surveys/:id/submit', async (req: Request, res: Response) => {
+//     try {
+//         const { userData, signature, signer, poolId } = req.body;
+//         const surveyId = req.params.id;
 
-        const isValidSignature = await verifyMessage({
-            message: `s3ntiment:submit:${surveyId}`,
-            signature,
-            address: signer
-        });
+//         const isValidSignature = await verifyMessage({
+//             message: `s3ntiment:submit:${surveyId}`,
+//             signature,
+//             address: signer
+//         });
 
-        const isPoolMember = await viem.read(
-            surveyStore.address as `0x${string}`,
-            surveyStore.abi,
-            'isPoolMember',
-            [poolId, signer]
-        );
+//         const isPoolMember = await viem.read(
+//             surveyStore.address as `0x${string}`,
+//             surveyStore.abi,
+//             'isPoolMember',
+//             [poolId, signer]
+//         );
 
-        if (!isValidSignature || !isPoolMember) {
-            console.log("ERROR", {
-                isValidSignature, 
-                isPoolMember, 
-                userData, 
-                signature, 
-                signer, 
-                poolId,
-                surveyId
-            })
-            res.status(403).json({ error: 'UNAUTHORIZED', isValidSignature, isPoolMember });
-            return;
-        }
+//         if (!isValidSignature || !isPoolMember) {
+//             console.log("ERROR", {
+//                 isValidSignature, 
+//                 isPoolMember, 
+//                 userData, 
+//                 signature, 
+//                 signer, 
+//                 poolId,
+//                 surveyId
+//             })
+//             res.status(403).json({ error: 'UNAUTHORIZED', isValidSignature, isPoolMember });
+//             return;
+//         }
 
-        await nildb.submitResponseForUser(surveyId, userData);
-        res.json({ success: true });
+//         await nildb.submitResponseForUser(surveyId, userData);
+//         res.json({ success: true });
 
-    } catch (error: any) {
-        console.error(error);
-        res.status(500).json({ error: 'SUBMIT_FAILED', detail: error.message });
-    }
-});
+//     } catch (error: any) {
+//         console.error(error);
+//         res.status(500).json({ error: 'SUBMIT_FAILED', detail: error.message });
+//     }
+// });
 
 // Score a submission (separate roundtrip, fires after submit when applicable)
 // Body: { signature, signer }
@@ -219,14 +203,42 @@ router.post('/surveys/:id/score', async (req: Request, res: Response) => {
 // Body: { groups, signature, signer }
 router.post('/surveys/:id/results', async (req: Request, res: Response) => {
     try {
-        const { groups } = req.body;
-        const results = await nildb.findSurveyResults(req.params.id, groups, "");
+        const surveyId = req.params.id;
+        const contract = surveyStore.address;
+        const { auth, groups, survey, poolId, poolConfig } = req.body;
+        const usageKey = await litPoolKeys.get(poolId);
+        const nillPkp = new NillionPkpClient(lit, poolId, poolConfig.safe, contract)
+
+        const runIds = await nillPkp.runQuery(auth, survey, poolConfig, usageKey!)
+        const results = await nillPkp.readQueryResults(auth, poolConfig, usageKey!, runIds);
+
+
+        console.log(results)
+
+        //const results = await nildb.findSurveyResults(req.params.id, groups, "");
         res.json({ results });
     } catch (error: any) {
         console.error(error);
         res.status(500).json({ error: 'RESULTS_FAILED', detail: error.message });
     }
 });
+
+router.post('/surveys/:surveyId/delegation', async (req, res) => {
+
+    const { surveyId } = req.params;
+    const { userDid, signature, userAddress, poolId, poolConfig} = req.body;
+
+    console.log({ userDid, signature, poolId, poolConfig })
+
+    const { delegation } = await survey.getUserDelegation(signature, userAddress, poolId, poolConfig, surveyId, userDid)
+    
+    res.json({ delegation });
+});
+
+router.post('/builder/register', async (req, res) => {
+
+   res.json(await pool.registerBuilder(req.body))
+})
 
 // --- Lit Protocol ---
 
@@ -248,12 +260,7 @@ router.post('/lit/usage-key', async (req: Request, res: Response) => {
             return;
         }
 
-        let key = await litPoolKeys.get(poolId);
-
-
-        if (key == undefined && poolId === "5f6b3f9b-5676-4927-b11a-0b1f02344cdf") {
-            key = "MCKlyMki/vKi2YvpWRoEmdROU+YFSR/aVNQJj9iVbEE=";
-        }
+        const key = await litPoolKeys.get(poolId);
 
         res.json({ apiKey: key });
 
@@ -281,6 +288,7 @@ async function startServer() {
     try {
         app.listen(PORT, () => {
             console.log(`server running at ${PORT}`);
+            console.log("kip")
         });
     } catch (error) {
         console.error('Failed to start server:', error);

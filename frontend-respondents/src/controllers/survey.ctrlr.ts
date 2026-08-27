@@ -4,7 +4,7 @@ import '@s3ntiment/shared/components';
 import '../components/survey-questions.js';
 import { IServices } from '../services.js';
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
-import { fetchAndDecryptSurveyWithRespondent, getDecryptForRespondentAction, isScored, Survey } from '@s3ntiment/shared';
+import { fetchAndDecryptSurveyWithRespondent, isScored, Pool, Survey } from '@s3ntiment/shared';
 
 import { store } from '../state';
 import { createUserDataObject } from '@s3ntiment/shared'
@@ -18,7 +18,8 @@ export class SurveyController {
   documentId: any;
   services: IServices;
   surveyId: string;
-  config?: Survey;
+  survey?: Survey;
+  pool?: Pool;
 
   constructor(services: IServices, surveyId: string) {
     this.services = services;
@@ -75,10 +76,10 @@ export class SurveyController {
 
       try {
         const survey = await fetchAndDecryptSurveyWithRespondent(
-          this.services, surveyStore, this.surveyId, BACKENDURL
+          this.services, surveyStore, this.surveyId, this.pool!.config, BACKENDURL
         );
 
-        this.config = survey;
+        this.survey = survey;
         survey.isScored = isScored(survey.groups);
         store.setSurveyData(this.surveyId, survey);
         store.persistSurveys();
@@ -104,47 +105,40 @@ export class SurveyController {
   async setSurveyListener() {
 
     document.addEventListener('survey-complete', async (event: any) => {
+      
       console.log('Survey completed!');
-      console.log('event:', event);
-
-      console.log("FROM STORE", store.activeSurvey)
-
       const seed = await this.services.account.createNillDBSeed();
       await this.services.nillDB.init(seed);
 
+      // new / update? 
       const docIUd = crypto.randomUUID();
-      const signature = await this.services.account.signMessage(`s3ntiment:submit:${this.surveyId}`);
-      const signerAddress = this.services.account.getSignerAddress();
-      const userData = createUserDataObject(docIUd, event.detail.answers, this.config!, signerAddress);
 
-      const result = await this.services.nillDB.storeStandard(BACKENDURL, this.surveyId, store.activeSurvey!.pool || '', userData, signature, signerAddress!);
-      console.log(result)
+      // replace with pool issued lit action 
+      const signature = await this.services.account.signMessage(`s3ntiment:submit`);
 
-      if (result.ok) {
-
-        router.navigate(`complete/${this.surveyId}/${docIUd}`)
-
-      } else {
-
-        const r: any = result.json();
-
-        if (r.error == "UNAUTHORISED") {
-          console.log("isValidSignature", r.isValidSignature)
-          console.log("isRespondent", r.isRespondent)
-        } else {
-          console.log("other error - network?")
-        }
-
+      const args = {
+        userDid: this.services.nillDB.userDidString, 
+        signature, 
+        userAddress: this.services.account.getSignerAddress(),
+        poolId: this.survey?.pool, 
+        pkpId: this.pool?.config.pkpId, 
+        pkpDid: this.pool?.config.pkpDid 
       }
 
-      // FLOW AS DESIGNED FOR OWNED COLLECTIONS
-      // const delegationToken = await this.services.nillDB.getUserDelegationToken("", this.surveyId, BACKENDURL);
+      const { delegation } = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/delegation`, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(args)
+      }).then(r => r.json());
 
-      // if (event.detail.documentId != undefined) {
-      //   await this.services.nillDB.updateOwned(this.config!, event.detail.answers, this.surveyId, delegationToken, event.detail.documentId);
-      // } else {
-      //   await this.services.nillDB.storeOwned(this.config!, event.detail.answers, this.surveyId, delegationToken);
-      // }
+      const result = await this.services.nillDB.storeOwned(docIUd, this.survey!, this.pool?.config!, event.detail.answers, this.surveyId, delegation)
+
+      console.log(result)
+
+      if (result.ok) router.navigate(`complete/${this.surveyId}/${docIUd}`)
+
     });
   }
 }

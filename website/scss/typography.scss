@@ -1,0 +1,46 @@
+@mixin heading-h1 {
+
+
+    padding: 0;
+    margin:0; 
+    text-transform: uppercase;
+    font-family: "Oswald";
+    font-weight: 600;
+    font-size: 1.8rem;
+    line-height: 1.33;
+    letter-spacing: 1px;
+
+}
+
+
+@mixin heading-h2 {
+
+    font-size: 1rem;
+    padding: 0;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 400;
+}
+
+@mixin heading-h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+}
+
+@mixin heading-h4 {
+
+    font-size: 1rem;
+    padding: 0;
+    font-weight: 600;
+}
+
+
+p {
+    font-family: "Lato";
+    font-family: "Nunito_Sans";
+    font-family: "Open_Sans";
+    font-family: "Source_Sans";
+}
