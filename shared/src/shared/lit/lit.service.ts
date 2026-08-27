@@ -1,3 +1,4 @@
+import { keccak256, toBytes } from "viem";
 import { callWithTimeout, withRetry } from "../helpers/index.js";
 import { encryptAction } from "./actions/encrypt.js";
 
@@ -27,54 +28,58 @@ export class LitService {
   // ============================================================
 
   private async call<T>(
-    endpoint: string,
-    options: {
-      method?: 'GET' | 'POST';
-      body?: Record<string, unknown>;
-      key?: string | null;
-    } = {},
-    signal?: AbortSignal
+      endpoint: string,
+      options: {
+        method?: 'GET' | 'POST';
+        body?: Record<string, unknown>;
+        key?: string | null;
+      } = {},
+      signal?: AbortSignal
   ): Promise<T> {
- 
-    const { method = 'GET', body, key } = options;
-    const apiKey = key === null ? undefined : (key ?? this.accountKey);
+      const { method = 'GET', body, key } = options;
+      const apiKey = key === null ? undefined : (key ?? this.accountKey);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+      const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+      };
 
-    // console.log("KEY2", apiKey)
+      if (apiKey) {
+          headers['X-Api-Key'] = apiKey;
+      }
 
-    if (apiKey) {
-      headers['X-Api-Key'] = apiKey;
-    }
+      return withRetry<T>(
+          async (retrySignal) => {
+              const response = await fetch(`${this.baseUrl}${endpoint}`, {
+                  method,
+                  headers,
+                  body: body ? JSON.stringify(body) : undefined,
+                  signal: signal ?? retrySignal,
+              });
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal, // <-- add this
-    });
+              const text = await response.text();
+              let data: any;
 
-    const text = await response.text();
-    
-    // Try to parse as JSON, handle HTML error pages
-    let data: any;
+              try {
+                  data = JSON.parse(text);
+              } catch {
+                  throw new Error(`Lit API returned non-JSON: ${response.status} ${text.slice(0, 200)}`);
+              }
 
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error(`Lit API returned non-JSON: ${response.status} ${text.slice(0, 200)}`);
-    }
+              if (!response.ok) {
+                  console.log('[Lit API] Error response:', response.status, text);
+                  throw new Error(data.error ?? data.message ?? data.detail ?? `HTTP ${response.status}: ${text.slice(0, 500)}`);
+              }
 
-    if (!response.ok) {
-      console.log('[Lit API] Error response:', response.status, text);
-      console.log('[Lit API] Error data:', JSON.stringify(data, null, 2));
-      throw new Error(data.error ?? data.message ?? data.detail ?? `HTTP ${response.status}: ${text.slice(0, 500)}`);
-    }
-
-    return data;
-  }  
+              return data;
+          },
+          {
+              retries: 3,
+              timeoutMs: 25_000,
+              onRetry: (attempt, error) =>
+                  console.log(`[Lit API] ${endpoint} retry ${attempt}/3: ${error.message}`),
+          }
+      );
+  }
 
   // ============================================================
   // Public (no auth)
@@ -120,36 +125,63 @@ export class LitService {
   // ============================================================
 
   async createPkp() {
-    const { wallet_address } = await this.call<{ wallet_address: string }>('/create_wallet');
-    return wallet_address;
+    const pkp = await this.call<{ wallet_address: string }>('/create_wallet');
+    console.log("PKP", pkp)
+    return pkp.wallet_address;
   }
 
-  async createGroup(name: string, description?: string) {
-    const result = await this.call<{ group_id: number | string; success: boolean }>('/add_group', {
-      method: 'POST',
-      body: {
+  async listPKPInGroup(groupId: number) {
+    const pkps = await this.call<any>(`/list_wallets_in_group?group_id=${groupId}&page_number=0&page_size=100`);
+    console.log("Wallets", pkps);
+    return pkps;
+  }
+
+  async listAllPKPs() {
+    const pkps = await this.call<any>(`/list_wallets?page_number=0&page_size=100`);
+    console.log("All Wallets:", JSON.stringify(pkps, null, 2));
+    return pkps;
+  }
+
+
+  async createGroup(name: string, description?: string, pkpIds?: string[], cidHashes?: string[]) {
+    // Log what we're sending
+    console.log('createGroup body:', {
         group_name: name,
         group_description: description ?? '',
-        pkp_ids_permitted: [],
-        cid_hashes_permitted: [],
-      },
+        pkp_ids_permitted: pkpIds ?? [],
+        cid_hashes_permitted: cidHashes ?? [],
+    });
+    
+    const result = await this.call<{ group_id: number | string; success: boolean }>('/add_group', {
+        method: 'POST',
+        body: {
+            group_name: name,
+            group_description: description ?? '',
+            pkp_ids_permitted: pkpIds ?? [],
+            cid_hashes_permitted: cidHashes ?? [],
+        },
     });
     
     return {
-      ...result,
-      group_id: Number(result.group_id),  // ensure it's a number
+        ...result,
+        group_id: Number(result.group_id),
     };
   }
 
-  async registerAction(actionCid: string, name: string, description?: string) {
-    return this.call<{ success: boolean }>('/add_action', {
-      method: 'POST',
-      body: {
-        action_ipfs_cid: actionCid,
-        name,
-        description: description ?? '',
-      },
+  async registerAction(cid: string, name: string): Promise<{ success: boolean; hashedCid: string }> {
+    const result = await this.call<{ success: boolean }>('/add_action', {
+        method: 'POST',
+        body: {
+            action_ipfs_cid: cid,
+            name,
+            description: name,
+        },
     });
+    
+    // Compute the hashed CID
+    const hashedCid = keccak256(toBytes(cid));
+    
+    return { ...result, hashedCid };
   }
 
   async addActionToGroup(groupId: number, actionCid: string) {
@@ -197,9 +229,11 @@ export class LitService {
   async executeAction(
     poolId: string,
     code: string,
-    jsParams: Record<string, unknown> = {}
+    jsParams: Record<string, unknown> = {},
+    key: string | undefined = undefined
   ) {
-    const key = this.poolKeys.get(poolId);
+
+    if (key == undefined) key = this.poolKeys.get(poolId);
     if (!key) throw new Error(`No key for pool ${poolId}`);
 
     return this.call<{ response: unknown; logs: string[]; has_error: boolean }>(
@@ -248,29 +282,22 @@ export class LitService {
   }
 
   async decrypt(key: string, pkpId: string, ciphertext: string, userAddress: string, signature: string, action: string): Promise<string> {
+      const result = await this.call<{ response: { plaintext?: string; error?: string } }>(
+          '/lit_action', {
+              method: 'POST',
+              body: { code: action, js_params: { pkpId, ciphertext, userAddress, signature } },
+              key,
+          }
+      );
 
-    const result = await withRetry<{ response: { plaintext?: string; error?: string } }>(
-      (signal) => this.call('/lit_action', {
-        method: 'POST',
-        body: { code: action, js_params: { pkpId, ciphertext, userAddress, signature } },
-        key,
-      }, signal),
-      {
-        retries: 3,
-        timeoutMs: 25_000,
-        onRetry: (attempt, error) =>
-          console.log(`[Lit decrypt] Attempt ${attempt}/3 failed: ${error.message}`),
+      if (result.response.error) {
+          throw new Error(`Lit decrypt error: ${result.response.error}`);
       }
-    );
 
-    if (result.response.error) {
-      throw new Error(`Lit decrypt error: ${result.response.error}`);
-    }
+      if (!result.response.plaintext) {
+          throw new Error(`Lit decrypt returned no plaintext. Response: ${JSON.stringify(result.response)}`);
+      }
 
-    if (!result.response.plaintext) {
-      throw new Error(`Lit decrypt returned no plaintext. Response: ${JSON.stringify(result.response)}`);
-    }
-
-    return result.response.plaintext!;
+      return result.response.plaintext!;
   }
 }

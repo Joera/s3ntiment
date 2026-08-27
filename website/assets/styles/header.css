@@ -1,17 +1,23 @@
 header {
-  position: relative;
+  position: fixed;
   display: flex;
   flex-direction: row;
   justify-content: center;
   align-items: center;
   width: 100%;
+  background: white;
+  border-bottom: 1px solid #EDEFF0;
+  z-index: 99;
 }
 header svg#owl {
   position: absolute;
-  top: 2rem;
+  top: 1rem;
   left: 1.5rem;
   height: 4rem;
   width: auto;
+}
+header svg#owl path {
+  fill: #355C53;
 }
 header .container {
   position: relative;
@@ -23,6 +29,13 @@ header .container {
 }
 header nav ul li {
   padding: 0 0.75rem;
+}
+header h1 {
+  color: black;
+  margin: 0.75rem;
+}
+header h1 span {
+  color: #62A496;
 }
 
 /*# sourceMappingURL=header.css.map */

@@ -1,0 +1,70 @@
+p {
+  font-family: "Lato";
+  font-family: "Nunito_Sans";
+  font-family: "Open_Sans";
+  font-family: "Source_Sans";
+}
+
+#crowd {
+  position: fixed;
+  top: 5rem;
+  left: 0;
+  width: 100vw;
+  height: auto;
+}
+
+main {
+  position: relative;
+}
+
+#intro {
+  position: relative;
+}
+#intro svg {
+  position: absolute;
+  margin-top: 6rem;
+  width: 800px;
+  opacity: 0.8;
+}
+#intro svg path {
+  fill: black;
+}
+#intro svg {
+  display: none;
+}
+#intro article {
+  margin-top: 0rem;
+  position: relative;
+  padding: 1.5rem 11rem;
+}
+#intro h2 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+  font-size: 3.2rem;
+  line-height: 1.1;
+  color: #4C8175;
+  background: #EDEFF0;
+  padding: 1rem;
+  width: 100%;
+}
+#intro p {
+  text-align: left;
+  color: #191B1C;
+  font-size: 1.125rem;
+  margin-top: 0;
+  background: #EDEFF0;
+  padding: 0.25rem 1rem 1.5rem 1rem;
+}
+#intro button {
+  position: absolute;
+  bottom: 6rem;
+  align-self: center;
+  margin-top: 3rem;
+  color: #A8F3E3;
+  background: #355C53;
+}
+
+/*# sourceMappingURL=intro.css.map */

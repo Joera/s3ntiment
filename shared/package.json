@@ -46,9 +46,9 @@
     "@nillion/nuc": "^2.0.0",
     "@nillion/secretvaults": "^3.0.0",
     "d3": "^7.9.0",
+    "fs": "0.0.1-security",
     "multiformats": "^13.4.2",
     "permissionless": "^0.3.4",
-    "fs": "0.0.1-security",
     "viem": "^2.46.2"
   },
   "devDependencies": {
@@ -63,8 +63,8 @@
     "@types/node": "^25.6.0",
     "typescript": "^5.9.3",
     "d3": "^7.9.0",
-    "multiformats": "^13.4.2",
     "fs": "0.0.1-security",
+    "multiformats": "^13.4.2",
     "permissionless": "^0.3.4",
     "viem": "^2.46.2"
   }

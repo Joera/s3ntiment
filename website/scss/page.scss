@@ -1,0 +1,88 @@
+
+@use 'typography' as *;
+@use '_colours' as *;
+
+#page {
+
+    margin-top: 5rem;
+    width: 100%;
+    // background-color: $gray-lightest;
+
+
+    #page-intro {
+
+        margin-top: 6rem;
+
+        .tag {
+            @include heading-h2;
+            margin-bottom: .25rem;
+        }
+
+        h2 {
+            @include heading-h1;
+            color: $teal-deeper;
+            margin-bottom: 1.5rem;
+            font-size: 2.4rem;
+            line-height: 1.175;
+            text-transform: none;
+            letter-spacing: 0;
+
+        }
+
+        
+        // p {
+        //     text-align: left;
+        // }
+    }
+
+    #main-image {
+
+        margin: 3rem auto 6rem auto; 
+        background-color: $gray-lightest;
+
+        img {
+            width: 100%;
+            height: auto;
+        }
+    }
+
+    .paragraph {
+
+
+        h3 {
+
+            @include heading-h3;
+            color: $pink-too-dark;
+            
+        }
+
+        h4 {
+            @include heading-h4;
+        }
+
+        a {
+            color: $pink;
+            text-decoration: none;
+            border-bottom: 1px solid $pink;
+        }
+    }
+
+    #outro {
+
+        margin: 3rem 0;
+        background: $pink;
+        color: $pink-too-dark;
+        padding: 1.5rem;
+
+        h3 {
+
+            margin-bottom: 1.5rem;
+        }
+
+        ul {
+            margin:auto;
+            padding: 0; 
+            list-style-type: disc;
+        }
+    }
+}

@@ -6,7 +6,7 @@ import './survey-forms/survey-form-intro.js'
 import './survey-forms/survey-form-questions.js'
 import './survey-forms/pool-form-batches.js'
 
-type Step = 'intro' | 'questions' | 'batches' | 'creating-pool' | 'creating-survey' | 'creating-invites' | 'submitting-tx' | 'error'
+type Step = 'intro' | 'questions' | 'batches' | 'creating-pool' | 'register-pool' | 'creating-survey' | 'creating-invites' | 'submitting-tx' | 'error'
 
 class DraftSurveyEditor extends HTMLElement {
     private unsubscribeUI: (() => void) | null = null
@@ -132,6 +132,8 @@ class DraftSurveyEditor extends HTMLElement {
                 return `<pool-form-batches mode="draft" class="container"></pool-form-batches>`
             case 'creating-pool':
                 return `<loading-spinner message='creating pool'></loading-spinner>`
+            case 'register-pool':
+                return `<loading-spinner message='registering pool'></loading-spinner>`
             case 'creating-survey':
                 return `<loading-spinner message='creating survey'></loading-spinner>`
             case 'creating-invites':

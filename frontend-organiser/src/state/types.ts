@@ -24,7 +24,7 @@ export interface BatchesMap {
 
 export interface UIState {
   landingStep: 'welcome' | 'register' | 'choice';
-  newStep: 'intro' | 'questions' | 'batches' | 'creating-pool' | 'creating-survey' | 'creating-invites' | 'submitting-tx' | 'error';
+  newStep: 'intro' | 'questions' | 'batches' | 'creating-pool' | 'register-pool' | 'creating-survey' | 'creating-invites' | 'submitting-tx' | 'error';
   resultTab: 'spinner' | 'results' | 'access' | 'questions' | 'batches';
   batchTab: 'qr-codes' | 'ipfs' | 'urls';
 }

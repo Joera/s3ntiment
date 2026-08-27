@@ -1,0 +1,80 @@
+
+@use 'typography' as *;
+@use '_colours' as *;
+
+#app {
+    width: 100%;
+}
+
+h2.header {
+
+    align-self: center;
+    margin: 0 0 3rem 1.5rem;
+    @include heading-h2;
+
+}
+#intro {
+
+    margin-top: 5rem;
+    height: calc(100vh - 5rem - 12rem)
+}
+
+#why, #how, #who {
+
+    margin-top: -1px;  
+    padding: 3rem 0;
+    background: white;
+}
+
+
+
+#features {
+
+    background: white;
+    margin-top: -1px;
+
+    .container {
+
+        padding-bottom: 6rem;
+        justify-content: space-around;
+
+        > article {
+
+            max-width: 400px;
+        }
+
+    }
+}
+
+.intermezzo {
+
+    background: white;
+    padding: 3rem 0;
+    margin-top: -1px;
+
+    h3 {
+        @include heading-h3;
+        text-transform: uppercase;
+        color: $pink;
+        margin-left: 3rem;
+        max-width: 600px; 
+        text-align: center;
+    }
+
+}
+
+#outro {
+
+    background: white;
+    height: 40vh;
+
+    h3 {
+        @include heading-h3;
+    }
+
+    button {
+        background-color: black;
+        margin-top: 3rem;
+        align-self: center;
+    }
+}

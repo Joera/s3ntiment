@@ -1,6 +1,6 @@
 export const compactAction = (code: string): string => {
   return code
-    .replace(/\s+/g, ' ')  // collapse whitespace
-    .replace(/\s*([{}();,])\s*/g, '$1')  // remove space around syntax
+    .replace(/\n/g, ' ')             // newlines to spaces
+    .replace(/\s{2,}/g, ' ')         // collapse multiple spaces to one
     .trim();
-}
+};

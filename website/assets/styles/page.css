@@ -1,0 +1,80 @@
+p {
+  font-family: "Lato";
+  font-family: "Nunito_Sans";
+  font-family: "Open_Sans";
+  font-family: "Source_Sans";
+}
+
+#page {
+  margin-top: 5rem;
+  width: 100%;
+}
+#page #page-intro {
+  margin-top: 6rem;
+}
+#page #page-intro .tag {
+  font-size: 1rem;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 400;
+  margin-bottom: 0.25rem;
+}
+#page #page-intro h2 {
+  padding: 0;
+  margin: 0;
+  text-transform: uppercase;
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  letter-spacing: 1px;
+  color: #4C8175;
+  margin-bottom: 1.5rem;
+  font-size: 2.4rem;
+  line-height: 1.175;
+  text-transform: none;
+  letter-spacing: 0;
+}
+#page #main-image {
+  margin: 3rem auto 6rem auto;
+  background-color: #EDEFF0;
+}
+#page #main-image img {
+  width: 100%;
+  height: auto;
+}
+#page .paragraph h3 {
+  font-family: "Oswald";
+  font-weight: 600;
+  font-size: 1.8rem;
+  line-height: 1.33;
+  margin: 0;
+  color: #57212d;
+}
+#page .paragraph h4 {
+  font-size: 1rem;
+  padding: 0;
+  font-weight: 600;
+}
+#page .paragraph a {
+  color: #cd7c8d;
+  text-decoration: none;
+  border-bottom: 1px solid #cd7c8d;
+}
+#page #outro {
+  margin: 3rem 0;
+  background: #cd7c8d;
+  color: #57212d;
+  padding: 1.5rem;
+}
+#page #outro h3 {
+  margin-bottom: 1.5rem;
+}
+#page #outro ul {
+  margin: auto;
+  padding: 0;
+  list-style-type: disc;
+}
+
+/*# sourceMappingURL=page.css.map */

@@ -7,7 +7,6 @@ const SURVEYS_STORAGE_KEY = 'surveys';
 const POOLS_STORAGE_KEY = 'pools';
 const BATCHES_STORAGE_KEY = 'batches';
 
-
 export function loadSurveysFromStorage(): SurveysMap {
   try {
     const stored = localStorage.getItem(SURVEYS_STORAGE_KEY);

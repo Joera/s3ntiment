@@ -7,3 +7,5 @@ node
 !shared/src/node
 cards
 logs
+# Runtime PKP pool-key artifacts (public keys fetched at runtime; do not commit)
+**/.data/pool-keys/*.json
