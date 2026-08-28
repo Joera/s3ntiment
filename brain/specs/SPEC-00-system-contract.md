@@ -120,17 +120,30 @@ Full text lives in the relevant component spec.
 
 ## Gap register
 
+> **Verified 2026-08-27** against HEAD `01d95773` (`brain implant`). GAP-7 resolved; GAP-2/GAP-3
+> scope widened; GAP-9/GAP-10 confirmed with refinements; GAP-11..GAP-17 newly added. Full evidence:
+> `brain/audits/gap-verification-2026-08-27.md`.
+
 - **GAP-1 (real, unresolved) — Commented-out ownership verification in `survey.ctrlr.ts`.**
   `create`/`update` carry a comment claiming authorization is enforced on-chain, but the backend
   functions have no caller-identity check; `verifyPoolOwner`/`verifyOwnership` are written and fully
   commented out. Safety depends on where the Safe-executed tx sits in the flow (Q2).
-- **GAP-2 (real, unresolved) — `getUserWriteDelegation` issues a write delegation with no membership
-  check.** Any DID that asks gets `nil/db/data/create` scoped only by `surveyId`. Raised in chat
-  (Apr 2026) and still open. Partly masked today because the live write path is `storeStandard`
-  (DR-N2), where the backend writes and *does* check membership — but the endpoint is still exposed.
-- **GAP-3 (real, security) — Hardcoded fallback secrets in `nillcc-backend`.** A fallback Lit usage
-  key literal and a hardcoded `pkpId` in `main.ts` and `survey.ctrlr.ts`, used whenever a pool's real
-  key/PKP isn't found. Dev scaffolding left in after `PoolController.create` was built.
+- **GAP-2 (real, unresolved, WORSE than first described) — `getUserWriteDelegation` issues a write
+  delegation with no membership check and NO `.policy()` at all.** Verified 2026-08-27: the
+  `POST /surveys/:id/delegation` route (`main.ts:130-133`) has no signature/membership check, and
+  the delegation grants any DID a 1-hour unrestricted `nil.db.data.create` — `surveyId` is only used
+  in a `console.log` (`nildb.builder.service.ts:120-134`). Contrast `getOwnerReadDelegation`
+  (`:137-147`), which *does* scope via `.policy([["==", ".args.collection", surveyId]])`. Partly
+  masked today because the live write path is `storeStandard` (DR-N2), where the backend writes and
+  *does* check membership — but the endpoint is still exposed.
+- **GAP-3 (real, security, BROADER than first described) — Hardcoded fallback secrets.** Verified
+  2026-08-27: `pkpId` `0x7598155069ba02e7dd87afc0c2b5e587b34b2379` is used **unconditionally** in
+  backend `create` (`survey.ctrlr.ts:29,46-47`), plus a fallback usage key literal
+  (`survey.ctrlr.ts:31-35`, `main.ts:254-255`). Also present beyond the register:
+  `shared/src/shared/survey/survey.factory.ts:31,85` (both decrypt paths),
+  `frontend-organiser/src/controllers/new.ctrlr.ts.ts:79-81`, and
+  `frontend-organiser/src/controllers/survey.ctrlr.ts:189` (hardcoded poolId). Introduced at HEAD
+  `4cf68f413`. Dev scaffolding left in after `PoolController.create` was built.
 - **GAP-4 (real, security-adjacent) — Committed private key in `protocol/scripts/fund-myself.ts`.**
 - **GAP-5 (design gap, acknowledged in code) — `PoolController.update` is an empty stub** whose body
   is the comment "but with what authority???". No key rotation, no adding actions to an existing
@@ -140,28 +153,76 @@ Full text lives in the relevant component spec.
   (DR-L1). `protocol/` is therefore **vestigial Naga-era tooling**, as is `shared/lit/accs.ts` (ACCs
   were the Naga access mechanism; Chipotle enforces inside action code). Action: delete or quarantine
   both; do not reintroduce ACC-style gating.
-- **GAP-7 (naming) — `nillcc-backend` vs `nilcc-backend`** drift between directory, package name and
-  older references. Pick one.
-- **GAP-8 (unverified, scope) — both frontends were not read deeply.** Their specs are file-tree
-  sketches; the WaaP+OPRF auth flow, card-scan flow and results rendering are ⚠ UNVERIFIED.
-- **GAP-9 (drift) — `createSurvey` authority is stricter in code than in the design.** The Mar 2026
-  design (DR-C5) had subsequent surveys creatable by *any Safe signer* via
+- **GAP-7 — RESOLVED / STALE (was: `nillcc-backend` vs `nilcc-backend` naming drift).** Verified
+  2026-08-27: directory, package name (`@s3ntiment/nillcc-backend`) and dev script all use `nillcc`;
+  `git grep "nilcc"` finds only `.pi/skills/nillion.md` (unrelated Nillion product doc) and this
+  register entry. No code drift remains — close the entry.
+- **GAP-8 (partially verified 2026-08-27, specs still shallow) — both frontends were not read
+  deeply.** Their specs are file-tree sketches, but the underlying code is real and wired: organiser
+  create/update/results flow (`new.ctrlr.ts.ts`, `survey.ctrlr.ts`) and respondents
+  WaaP+OPRF+card-register+decrypt+submit flow (`auth-ctrlur.ts`, `auth.factory.ts`, `survey.ctrlr.ts`)
+  all exist. The specs can be upgraded from "file-tree sketch" to "verified at these call sites";
+  `frontend-respondents/lit-actions/decrypt-signature.js` is confirmed vestigial (unreferenced).
+- **GAP-9 (drift, confirmed 2026-08-27) — `createSurvey` authority is stricter in code than in the
+  design.** The Mar 2026 design (DR-C5) had subsequent surveys creatable by *any Safe signer* via
   `ISafe(pool.safe).isOwner(msg.sender)`; the deployed contract requires
-  `pools[poolId].safe == msg.sender`, i.e. a full Safe-executed tx per survey. Deliberate tightening
-  or lost in a rewrite? It materially changes organiser UX.
-- **GAP-10 (drift) — collection ownership contradicts DR-N3.** `createSurveyCollection` passes
-  `owner: this.builderDid.didString`, so the *builder* owns every survey collection. DR-N3 concluded
-  the opposite. Combined with DR-N2, current state is builder-owned collection + builder-written
-  data — the weakest point in the architecture relative to pillar 2.
+  `pools[poolId].safe == msg.sender` (`S3ntimentSurveyStore.sol:160`), i.e. a full Safe-executed tx
+  per survey. Nuance: the `isOwner`-for-signers model *survives* in the decrypt Lit action
+  (`shared/.../lit/actions/decrypt-for-owner.ts:26-32` checks `safe.isOwner(userAddress)`) even
+  though the contract dropped it for `createSurvey` — relevant to Q3. Deliberate tightening or lost
+  in a rewrite? It materially changes organiser UX.
+- **GAP-10 (drift, confirmed 2026-08-27) — collection ownership contradicts DR-N3.**
+  `createSurveyCollection` (`nildb.builder.service.ts:60-70`) hardcodes `owner:
+  this.builderDid!.didString`, so the *builder* owns every survey collection. Two refinements:
+  (1) the third parameter `surveyOwnerDid` is **ignored dead code** — the body never reads it; the
+  call site (`survey.ctrlr.ts:40-41`) passes the builder DID anyway, and the collection type is
+  `"standard"`. (2) the "owned-collection API unavailable" rationale is **stale**: the repo pins
+  `@nillion/secretvaults@3.0.0` (root override), and `storeOwned`/`updateOwned`
+  (`nilldb.user.service.ts:74-129`) already implement the owned-collection write against that SDK —
+  reinstating the owned path is a wiring change, not blocked on the SDK. (Note:
+  `frontend-respondents/package.json` still declares the old SDK 0.1.7/0.1.1; the root override
+  rewrites it to 3.0.0/2.0.1.) Combined with DR-N2, current state is builder-owned collection +
+  builder-written data — the weakest point in the architecture relative to pillar 2.
+- **GAP-11 (real, security — NEW 2026-08-27) — Unguarded aggregated-results endpoint.**
+  `POST /surveys/:id/results` (`main.ts:220-227`) has no signature, membership or owner check despite
+  its comment "Get aggregated survey results (owner only)"; `findSurveyResults` accepts a `signature`
+  arg but the caller passes `""` (`nildb.builder.service.ts:157`). Anyone who can reach the backend
+  can dump tallied results for any survey. Arguably the most exposed endpoint in the codebase.
+- **GAP-12 (real, security — NEW 2026-08-27) — Hardcoded Alchemy API key baked into Lit Action
+  sources.** `shared/src/shared/lit/actions/decrypt-for-owner.ts:3`,
+  `decrypt-for-respondent.ts:15`, `decrypt.ts:4` embed
+  `https://base-mainnet.g.alchemy.com/v2/NFOkRqUo2swIC9g5tRJ7c` in the action source that
+  `PoolController.create` registers on Lit. Committed RPC key in tracked code.
+- **GAP-13 (real — NEW 2026-08-27) — Hardcoded dev-pool bypass threaded through backend + frontends.**
+  poolId `5f6b3f9b-5676-4927-b11a-0b1f02344cdf` appears in `main.ts:254` (fallback usage key),
+  `frontend-organiser/src/controllers/survey.ctrlr.ts:189` ("should be added or selected at import"),
+  and `new.ctrlr.ts.ts:79-81` (reuse existing PKP + `groupId = 22` instead of minting). A hardcoded
+  production-pool shortcut in the create path — an extension of GAP-3.
+- **GAP-14 (real — NEW 2026-08-27) — Create/update HTTP endpoints are completely unauthenticated.**
+  `POST /surveys` (`main.ts:78-84`) and `PUT /surveys/:id` (`:99-111`) have no `verifyMessage` and no
+  middleware; the `verifySignature` middleware (`:50-60`) is defined but attached to no route (dead
+  code, cf. DR-B1). Answers Q2: the backend call precedes the Safe tx.
+- **GAP-15 (minor bug — NEW 2026-08-27) — Submit error-string mismatch.** Backend returns
+  `'UNAUTHORIZED'` (`main.ts:171`); the respondents frontend checks `r.error == "UNAUTHORISED"`
+  (`frontend-respondents/src/controllers/survey.ctrlr.ts:131`) — the error branch never fires.
+- **GAP-16 (minor — NEW 2026-08-27) — Pool usage keys stored in plaintext on disk.**
+  `shared/src/node/lit.key-storage.ts` writes each pool's usage key to `.data/pool-keys/<poolId>.json`
+  unencrypted. Runtime storage, arguably acceptable for a backend, but worth noting.
+- **GAP-17 (minor — NEW 2026-08-27) — Vestigial `nillai.service.ts`.** `nillcc-backend/src/services/
+  nillai.service.ts` is entirely commented out (parked, per DR-B2) — dead code, not a secret.
 
 ## Open questions
 
 - **Q1 — CLOSED.** (Was: is `protocol/` still live?) No; Naga is deprecated. See GAP-6.
-- **Q2 (open)** — Where does the Safe-executed `createSurvey`/`updateSurvey` tx happen relative to
-  `SurveyController.create`/`.update`? (GAP-1)
+- **Q2 — ANSWERED 2026-08-27.** The backend call *precedes* the Safe-executed tx: the organiser
+  frontend POSTs `/api/surveys` then `safe.write('createSurvey')` (and PUTs then
+  `safe.write('updateSurvey')`). The backend does unauthenticated work (re-encrypt/upload to IPFS)
+  that the on-chain gate never sees — see GAP-14. (GAP-1)
 - **Q3 (open)** — Was the `isOwner`-for-signers path deliberately dropped or lost? (GAP-9)
-- **Q4 (open)** — Is `storeOwned` to be reinstated once Nillion's owned collections stabilise, or has
-  the standard-collection model become the design? (DR-N2, GAP-10)
+- **Q4 (open, but the blocker is gone)** — Is `storeOwned` to be reinstated, or has the
+  standard-collection model become the design? The "owned collections haven't stabilised" rationale
+  no longer holds: `@nillion/secretvaults@3.0.0` exposes the API `storeOwned` already implements
+  (GAP-10). Reinstating is now a deliberate wiring decision, not an SDK constraint. (DR-N2, GAP-10)
 
 ## Open tasks
 
@@ -173,6 +234,11 @@ Full text lives in the relevant component spec.
 - Decide pool-update authority — blocked on DR-L3 (GAP-5).
 - Resolve the two ownership drifts (GAP-9, GAP-10) before they harden into design.
 - Real read-pass on both frontends (GAP-8).
+- Gate `/surveys/:id/results` behind an owner/membership check (GAP-11).
+- Remove the Alchemy RPC key from Lit action sources (GAP-12).
+- Remove the hardcoded dev-pool bypass from the organiser create path (GAP-13).
+- Authenticate the create/update HTTP routes (GAP-14).
+- Fix the UNAUTHORIZED/UNAUTHORISED spelling mismatch (GAP-15).
 
 ## Per-component spec template
 
