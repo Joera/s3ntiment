@@ -18,7 +18,14 @@ export default defineConfig({
   root: '.',
   server: {
     port: 9999,
-    open: false
+    host: true,
+    open: false,
+    cors: true,                                                                           
+     headers: {                                                                            
+       'Access-Control-Allow-Origin': '*',                                                 
+       'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',                      
+       'Access-Control-Allow-Headers': '*',                                                
+     }                                                                                     
   },
   build: {
     outDir: 'dist',

@@ -1,0 +1,65 @@
+@use 'typography' as *;
+@use '_colours' as *;
+
+
+
+
+.block {
+
+    position: relative;
+    padding: 0 3rem 0 0;
+    display: flex;
+    flex-direction: column;
+    
+    .circle {
+
+        position: absolute;
+        border-radius: 50%;
+        background: #F1DEE1;
+        width: 100%;
+        height: 100%;
+    }
+
+    .tag {
+
+        @include heading-h2;
+    }
+
+    h3 {
+
+        position: relative;
+        @include heading-h3;
+    }
+
+    a {
+
+        position: relative;
+        color: $pink;
+        text-decoration: none;
+        border-bottom: 1px solid $pink;
+        align-self: flex-start;
+        color: $teal-light;
+    }
+
+    p {
+        position: relative;
+    }
+
+    &:last-child {
+
+        padding-right: 0;
+    }
+
+    &.centered {
+
+        padding: 3rem;
+        
+        p {
+            text-align: center;
+        }
+
+
+    }
+
+
+}

@@ -20,12 +20,13 @@ const initConfig = {
         allowedSocials: [],
         authenticationMethods: ["email", "phone"] as AuthenticationMethod[],
         styles: { darkMode: false },
+        allowedOrigins: ["*"]
     },
     project: {
         name: "S3ntiment",
         logo: "",
     },
-    useStaging: false,
+    useStaging: true,
     walletConnectProjectId: "",
     referralCode: "",
 };

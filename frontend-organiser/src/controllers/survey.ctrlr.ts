@@ -7,8 +7,8 @@ import '../components/pool-detail-access.js';
 import '../components/survey-forms/pool-form-batches.js';
 import '../components/registered-questions-editor.js';
 import { router } from "../router.js";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
-import {  fetchAndDecryptSurveyWithOwner, fetchLitApiKey, Survey } from "@s3ntiment/shared";
+import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' }
+import {  fetchAndDecryptSurveyWithOwner, fetchLitApiKey, Pool, Survey } from "@s3ntiment/shared";
 import { renderIcon } from "@s3ntiment/shared/assets";
 import '@s3ntiment/shared/components';
 
@@ -19,6 +19,7 @@ export class SurveyController {
     private services: IServices;
     private surveyId: string;
     private survey!: Survey;
+    private pool!: Pool;
     private cancelled = false;
 
     constructor(services: IServices, surveyId: string) {
@@ -186,23 +187,11 @@ export class SurveyController {
     
     async process() {
 
-        const poolId = "5f6b3f9b-5676-4927-b11a-0b1f02344cdf" // should be added or selected at import 
-
-        let safeAddress;
-        // die weten we dus niet - opnieuw afleiden
-     
-        if (this.survey.config?.safe) {
-            safeAddress = this.survey.config?.safe;
-        } else  {
-            safeAddress = await this.services.safe.predictSafeAddress(poolId);
-            console.log("safe", safeAddress)
-        } 
-
-
-        await this.services.safe.connectToExistingSafe(safeAddress || "") 
+        // we need safeAddress to decrypt
+        await this.services.safe.connectToExistingSafe(this.pool.config?.safe || "") 
         if (this.cancelled) return;
         // overwrite with decrypted content 
-        this.survey = await fetchAndDecryptSurveyWithOwner(this.services, surveyStore, this.surveyId, BACKENDURL)
+        this.survey = await fetchAndDecryptSurveyWithOwner(this.services, surveyStore, this.surveyId, this.pool.config!, BACKENDURL)
         if (this.cancelled) return;
 
         await this.refreshResponses(); 
@@ -211,10 +200,12 @@ export class SurveyController {
     async render() {
 
         const survey = store.surveys.find((s: any) => s.id === this.surveyId);
-
+        
         if (survey && survey !== undefined) {
             this.survey = survey;
         } 
+
+        this.pool = store.getPool(this.survey.pool!)!
 
         this.renderTemplate();
         this.process();
@@ -228,27 +219,35 @@ export class SurveyController {
 
     async refreshResponses () {
 
+        const auth = {
+            signature: await this.services.safe.signMessage('Request owner invocation'),
+            userAddress: this.services.safe.getSignerAddress()
+        }
+
         const response = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/results`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ 
-                surveyId: this.survey.id,
-                groups: this.survey.groups   
+                auth,
+                queryIds: this.survey.queryIds,
+                poolId: this.survey.pool,
+                groups: this.survey.groups,
+                poolConfig: this.pool.config 
             })
         });
 
-        console.log(response)
+        console.log(response);
 
-        const talliedResults = await response.json();
+        // const talliedResults = await response.json();
 
-        this.survey.results = talliedResults.results;
+        // this.survey.results = talliedResults.results;
 
-        if (this.cancelled) return;  
+        // if (this.cancelled) return;  
 
-        console.log("RESULTS", this.survey.results)
-        store.addSurvey(this.survey);
+        // console.log("RESULTS", this.survey.results)
+        // store.addSurvey(this.survey);
     }
 
     setListeners() {
@@ -276,21 +275,11 @@ export class SurveyController {
             const original = store.surveys.find( s => s.id === this.surveyId);
             if (!original) return;
 
-            const clonedGroups = structuredClone(original.groups);
-
-            for (const group of clonedGroups!) {
-                group.id = `group_${Date.now()}`;
-                group.questions = group.questions.map(q => ({
-                    ...q,
-                    id: `question_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                }));
-            }
-
             store.updateSurveyDraft({
                 title: `${original.title} (copy)`,
                 pool: original.pool,
                 introduction: original.introduction,
-                groups: clonedGroups,
+                groups: structuredClone(original.groups),
                 batches: [],           
             });
 
@@ -330,20 +319,14 @@ export class SurveyController {
         document.addEventListener('survey-save', async (e: Event) => {
             const { surveyId, groups } = (e as CustomEvent).detail
 
-            await this.services.safe.connectToExistingSafe(this.survey.config?.safe || "");
+            await this.services.safe.connectToExistingSafe(this.pool.config?.safe || "");
 
             // old state !
             const existing = store.surveys.find((s: any) => s.id === surveyId)
             if (existing) {
 
                 const surveyConfig: Survey = { 
-                    id: existing.id,
-                    pool: existing. pool,
-                    title: existing.title,
-                    introduction: existing.introduction,
-                    createdAt: existing.createdAt, /// ???? 
-                    config:existing.config,   // ????
-                    batches: existing.batches,   // ????? 
+                    ...existing,
                     groups: groups
                 };
 
@@ -357,7 +340,7 @@ export class SurveyController {
                     body: JSON.stringify({   
                         surveyId,      
                         surveyConfig,
-                        safeAddress: this.survey.config?.safe,
+                        safeAddress: this.pool.config?.safe,
                         poolId: existing.pool
                     })
                 });

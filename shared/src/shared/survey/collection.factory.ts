@@ -2,33 +2,6 @@ import { CreateCollectionRequest } from '@nillion/secretvaults';
 import { Question, Survey } from '../index.js';
 import { randomUUID } from 'crypto';
 
-export const createTestCollectionschema = () => {
-
-    const NOTES_COLLECTION_SCHEMA: Omit<CreateCollectionRequest, "_id"> = {
-        type: "standard",
-        name: "encrypted-notes",
-        schema: {
-            $schema: "http://json-schema.org/draft-07/schema#",
-            type: "array",
-            uniqueItems: true,
-            items: {
-                type: "object",
-                properties: {
-                    _id: { type: "string", format: "uuid" },
-                    title: { type: "string" },                   // Plaintext - for display
-                    content: {                                   // ENCRYPTED - secret shared
-                        type: "object",
-                        properties: { "%share": { type: "string" } },
-                        required: ["%share"],
-                    }
-                },
-                required: ["_id", "title", "content"],
-            },
-        },
-    };
-
-    return NOTES_COLLECTION_SCHEMA;
-}
 
 export const createSurveyCollectionSchema = (config: Survey, type: "owned" | "standard" = "standard") => {
     const properties: Record<string, any> = {
@@ -81,7 +54,7 @@ function addQuestionProperties(properties: Record<string, any>, question: Questi
                 for (let i = 0; i < question.options.length; i++) {
                     properties[`${question.id}_${i}`] = {
                         type: "object",
-                      //  properties: { "%share": { type: "integer" } }  // 0 or 1
+                       // properties: { "%share": { type: "integer" } }  // 0 or 1
                         properties: { "%share": { type: "string" } } 
                     };
                 }

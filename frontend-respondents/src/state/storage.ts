@@ -1,8 +1,33 @@
+import { Pool } from "@s3ntiment/shared";
 import { UserState } from "./store.types";
 import { SurveyMap } from "./surveys.store";
 
 // const CAP_DELEGATION_KEY = 'litCapabilityDelegation';
 const SURVEYS_STORAGE_KEY = 'surveys';
+const POOLS_STORAGE_KEY = 'pools';
+
+export interface PoolsMap {
+  [id: string]: Pool;
+}
+
+export function loadPoolsFromStorage(): PoolsMap {
+  try {
+    const stored = localStorage.getItem(POOLS_STORAGE_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch (e) {
+    console.warn('Failed to load pools from localStorage:', e);
+  }
+  return {};
+}
+
+export function savePoolsToStorage(surveys: PoolsMap): void {
+  try {
+    localStorage.setItem(POOLS_STORAGE_KEY, JSON.stringify(surveys));
+  } catch (e) {
+    console.warn('Failed to save pools to localStorage:', e);
+  }
+}
+
 
 export function loadUserFromStorage(): UserState {
   return {
@@ -49,39 +74,6 @@ export function saveSurveysToStorage(surveys: SurveyMap): void {
 export function clearSurveysFromStorage(): void {
   localStorage.removeItem(SURVEYS_STORAGE_KEY);
 }
-
-// export function saveCapabilityDelegation(delegation: any): void {
-//   try {
-//     localStorage.setItem(CAP_DELEGATION_KEY, JSON.stringify(delegation));
-//   } catch (e) {
-//     console.warn('Failed to save capability delegation:', e);
-//   }
-// }
-
-// export function loadCapabilityDelegation(): any | null {
-//   try {
-//     const stored = localStorage.getItem(CAP_DELEGATION_KEY);
-//     if (!stored) return null;
-//     const delegation = JSON.parse(stored);
-//     if (isDelegationExpired(delegation)) {
-//       localStorage.removeItem(CAP_DELEGATION_KEY);
-//       return null;
-//     }
-//     return delegation;
-//   } catch (e) {
-//     return null;
-//   }
-// }
-
-// function isDelegationExpired(delegation: any): boolean {
-//   try {
-//     const match = delegation.signedMessage.match(/Expiration Time: (.+)/);
-//     if (!match) return true;
-//     return new Date(match[1].trim()) < new Date();
-//   } catch {
-//     return true;
-//   }
-// }
 
 export function slugify(text: string): string {
   return text

@@ -75,7 +75,7 @@ export class AuthController {
             //  //   alert("your mailadress was already used for this survey. Skip if you're just tesing")
             // }
 
-            if(!isParticipant || import.meta.env.VITE_PROD !== 'true') {
+            if(!isParticipant) {
 
                 try {
                     const tx = await card.register(this.services, surveyStore, poolId);

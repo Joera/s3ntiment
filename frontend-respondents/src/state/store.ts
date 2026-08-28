@@ -3,17 +3,20 @@ import { UserStore } from './user.store.js';
 import { SurveysStore, SurveyEntry, SurveyMap } from './surveys.store.js';
 import { UIState, UserState } from './store.types.js';
 import { Listener } from './observable.js';
-import { Survey } from '@s3ntiment/shared';
+import { Pool, Survey } from '@s3ntiment/shared';
+import { PoolStore } from './pool.store.js';
 
 class Store {
   private uiStore: UIStore;
   private userStore: UserStore;
   private surveysStore: SurveysStore;
+  private poolStore: PoolStore;
 
   constructor() {
     this.uiStore = new UIStore();
     this.userStore = new UserStore();
     this.surveysStore = new SurveysStore();
+    this.poolStore = new PoolStore();
 
   }
 
@@ -52,11 +55,13 @@ class Store {
 
 
   // ============ Global ============
-    clear(): void {
-        this.uiStore.reset();
-        this.userStore.clear();
-        this.surveysStore.clear();
-    }
+  clear(): void {
+      this.uiStore.reset();
+      this.userStore.clear();
+      this.surveysStore.clear();
+  }
+
+  getPool(id: string): Pool | undefined { return this.poolStore.get(id); }
 }
 
 export const store = new Store();

@@ -2,8 +2,8 @@
 
 > Structural overview of the s3ntiment monorepo. Keep this in context every
 > session as the "where everything lives" index for reasoning about code
-> without perusing every path. No brain specs exist yet — this map is the
-> current index; specs land in `brain/specs/` as they're written.
+> without perusing every path. Specs live in `brain/specs/` (SPEC-00 is the
+> system contract / map of the maps); this map is the *where* index.
 >
 > Regenerate the tree below with `~/s3ntiment-repomix.sh map` when structure changes.
 
@@ -11,24 +11,24 @@
 
 | Component | Package | Spec(s) | Code LOC | Entry | What it is |
 |---|---|---|---|---|---|
-| `shared` | `@s3ntiment/shared` | — | 4,970 | `src/shared/index.ts` (+ `./browser`, `./node`, `./assets`, `./components`) | Shared privacy/crypto plumbing lib for both frontends + backend: EVM/viem services, Lit service + Lit Action templates, Nillion/SecretVaults user client, IPFS, survey/response/collection factories, results scoring/tabulation, invites/cards, UI assets |
-| `frontend-organiser` | `@s3ntiment/frontend-organiser` | — | 7,521 | `src/main.ts` (Vite, `index.html`) | Creator/organiser web app — build pools & surveys, invite batches (QR cards), manage respondents, view results |
-| `frontend-respondents` | `frontend-respondents` | — | 2,434 | `src/main.ts` (Vite, `index.html`) | Respondent web app — scan QR card, authenticate (OPRF/WaaP), answer privately, completion view |
-| `contracts` | `s3ntiment-contracts` | — | 802 | `hardhat.config.ts` (rocketh deploy) | On-chain: `S3ntimentSurveyStore.sol` (pools, surveys, anonymous respondent registry), GreetingsRegistry, deploy scripts, deployments |
-| `protocol` | `@s3ntiment/protocol` | — | 151 | `scripts/` | Lit Protocol ops scripts — payment delegation (get-sponsored, delegate-user, fund-myself) |
-| `nillcc-backend` | `@s3ntiment/nillcc-backend` | — | 876 | `src/main.ts` (Express) | Backend API — survey/pool controllers, NilDB builder + NilAI services, Lit pool-keys, IPFS; serves both frontends |
+| `shared` | `@s3ntiment/shared` | SPEC-shared | 5,310 | `src/shared/index.ts` (+ `./browser`, `./node`, `./assets`, `./components`) | Shared privacy/crypto plumbing lib for both frontends + backend: EVM/viem services, Lit service + Lit Action templates (incl. per-pool owner-invocation / user-delegation / get-public-key), Nillion/SecretVaults user client, IPFS, survey/response/collection factories + aggregation queries + tally, results scoring/tabulation, invites/cards, UI assets |
+| `frontend-organiser` | `@s3ntiment/frontend-organiser` | SPEC-frontend-organiser | 7,355 | `src/main.ts` (Vite, `index.html`) | Creator/organiser web app — build pools & surveys, per-pool PKP provisioning flow, invite batches (QR cards), manage respondents, view results (PKP-owned aggregation query) |
+| `frontend-respondents` | `frontend-respondents` | SPEC-frontend-respondents | 2,277 | `src/main.ts` (Vite, `index.html`) | Respondent web app — scan QR card, authenticate (OPRF/WaaP), answer privately via `storeOwned` (PKP-granted delegation), completion view |
+| `contracts` | `s3ntiment-contracts` | SPEC-contracts | 802 | `hardhat.config.ts` (rocketh deploy) | On-chain: `S3ntimentSurveyStore.sol` (pools, surveys, anonymous respondent registry), GreetingsRegistry, deploy scripts, deployments (unchanged by owned-collections merge) |
+| `protocol` | `@s3ntiment/protocol` | SPEC-protocol | 151 | `scripts/` | Lit Protocol ops scripts — payment delegation (get-sponsored, delegate-user, fund-myself); Naga-era vestige (GAP-6) |
+| `nillcc-backend` | `@s3ntiment/nillcc-backend` | SPEC-nillcc-backend | 1,232 | `src/main.ts` (Express) | Backend API — per-pool PKP + nilDB builder registration, PKP-owned collections/queries, `NillionPkpClient`, survey/pool controllers, Lit pool-keys, IPFS; serves both frontends |
 | `website` | `website` | — | 88 | `index.html` + `build-css.ts` | Static landing site ("privacy by design"), scss → css build |
 
-Total ~17.2k LOC. No specs yet — this map is the *where*; specs land in `brain/specs/`.
+Total ~17.2k LOC. Specs live in `brain/specs/`; read SPEC-00 first.
 
 ## Per-component key dirs
 
-- **shared** — `src/shared/` (`evm/`, `lit/` + `lit/actions/` templates, `nillion/`, `ipfs/`, `survey/`, `invites/`, `results/`, `helpers/`), `src/browser/` (`evm/waap.service.ts`, `oprf/`, `graphs/`), `src/node/` (`lit.key-storage.ts`, `lit.pool-keys.ts`), `src/assets/` (fonts, icons, CSS-in-TS `styles/`, tokens, wasm), `src/components/`.
-- **frontend-organiser** — `src/components/` (`survey-forms/`, `survey-results/`, editors/lists), `src/controllers/`, `src/factories/` (auth/invitation/pool/survey), `src/services/services.ts` (ServiceContainer), `src/state/` (stores), `src/utils/`.
-- **frontend-respondents** — `src/controllers/` (auth/survey/completed/used-card…), `src/components/`, `src/state/`, `lit-actions/decrypt-signature.js`, `src/auth.factory.ts`, `src/ux.factory.ts`.
+- **shared** — `src/shared/` (`evm/`, `lit/` + `lit/actions/` templates incl. `get-public-key.ts`, `owner-invocation.ts`, `user-delegation.ts`, `nillion/` incl. `did.ts`, `delegations.ts`, `ipfs/`, `survey/` incl. `queries.ts`, `tally.ts`, `collection.factory.ts`, `response.factory.ts`, `invites/`, `results/`, `helpers/`), `src/browser/` (`evm/waap.service.ts`, `oprf/`, `graphs/`), `src/node/` (`lit.key-storage.ts`, `lit.pool-keys.ts`), `src/assets/` (fonts, icons, CSS-in-TS `styles/`, tokens, wasm), `src/components/`.
+- **frontend-organiser** — `src/components/` (`survey-forms/`, `survey-results/`, editors/lists), `src/controllers/` (`new.ctrlr.ts.ts`, `survey.ctrlr.ts`, …), `src/factories/` (auth/invitation/pool/survey), `src/services/services.ts` (ServiceContainer), `src/state/` (stores), `src/utils/`.
+- **frontend-respondents** — `src/controllers/` (auth/survey/completed/used-card…), `src/components/`, `src/state/` (incl. `pool.store.ts`), `lit-actions/decrypt-signature.js`, `src/auth.factory.ts`, `src/ux.factory.ts`.
 - **contracts** — `src/S3ntimentSurveyStore/S3ntimentSurveyStore.sol`, `deploy/`, `deployments/{base,sepolia}/`, `rocketh/`, `scripts/`, `test/`.
 - **protocol** — `scripts/` (`get-sponsored.ts`, `delegate-user.ts`, `fund-myself.ts`).
-- **nillcc-backend** — `src/services/` (`nildb.builder.service.ts`, `nillai.service.ts`), `src/survey.ctrlr.ts`, `src/pool.ctrlr.ts`, `src/key.management.ts`, `src/contract.factory.ts`, `Dockerfile`/`docker-compose.yaml`.
+- **nillcc-backend** — `src/services/` (`nildb.pkp.service.ts`, `nildb.builder.service.ts`, `nillai.service.ts`), `src/survey.ctrlr.ts`, `src/pool.ctrlr.ts`, `src/key.management.ts`, `src/contract.factory.ts`, `Dockerfile`/`docker-compose.yaml`.
 - **website** — `scss/` (source), `assets/styles/` (generated css — excluded from dumps), `index.html`, `build-css.ts`.
 
 ## Repomix usage (economical tiers)
@@ -61,8 +61,7 @@ website/
   scss/  assets/styles/  index.html  build-css.ts
 branding/   (asset-only: fonts, svg, odp, pdf — no code)
 brain/
-  code-map/  (this file)
-(repo root: pnpm-workspace.yaml, package.json, project.json, dev.sh, scripts/dev-with-logs.sh)
+  code-map/  specs/  audits/  (this file + SPEC-00..SPEC-protocol + dated audit notes)
 ```
 
 Full file-level tree: run `~/s3ntiment-repomix.sh map` → `/tmp/s3ntiment-structure.md`.
