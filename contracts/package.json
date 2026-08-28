@@ -57,6 +57,7 @@
 		"local_node": "ldenv -d localhost hardhat node",
 		"compile": "hardhat compile",
 		"compile:watch": "as-soon -w src pnpm compile",
+		"check:abi": "tsx scripts/check-abi-snapshot.ts",
 		"fork:execute": "ldenv tsx @=HARDHAT_FORK=@@MODE @@",
 		"fork:deploy": "ldenv pnpm @=HARDHAT_FORK=@@MODE compile --build-profile production ~~  pnpm hardhat --network fork deploy --report-gas-used ~~ @@",
 		"deploy:dev": "ldenv -d localhost pnpm :deploy+export @@",
