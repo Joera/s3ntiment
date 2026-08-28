@@ -853,6 +853,51 @@ describe('S3ntimentSurveyStore', function () {
 			).toEqual(false);
 		});
 
+		it('reverts when a valid-length signature has an out-of-range v (Invalid signature recovery value)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWallet = unnamedAccounts[3];
+			const poolId = 'pool-reg-v';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+
+			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
+			// 65-byte signature (valid length) whose v byte is outside {27, 28}.
+			// v = 0x02 -> adjusted to 29 (not 27/28), so recovery must revert.
+			const r = '0x' + 'aa'.repeat(32);
+			const s = '0x' + 'bb'.repeat(32);
+			const badVSignature = r + s.slice(2) + '02';
+			await expect(
+				mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					'card-v',
+					batchAddress,
+					badVSignature,
+				]),
+			).toBeRejectedWith(
+				`VM Exception while processing transaction: reverted with reason string 'Invalid signature recovery value'`,
+			);
+		});
+
+		it('returns false for an unused nullifier (default state)', async function () {
+			const {env, S3ntimentSurveyStore} =
+				await networkHelpers.loadFixture(deployAll);
+			// A nullifier/batch that has never been used should default to false.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: ['never-used-card', '0x' + '99'.repeat(20)],
+				}),
+			).toEqual(false);
+		});
+
 		it('rejects a signature of the wrong length', async function () {
 			const {env, S3ntimentSurveyStore, unnamedAccounts} =
 				await networkHelpers.loadFixture(deployAll);
