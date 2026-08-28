@@ -8,7 +8,7 @@ shared authority modifier. No ABI/selector change; no deferred methods added.
 `deepseek/method-surface`
 
 ## Commit
-`b5ebac82b` — refactor(S3ntimentSurveyStore): center Safe authority check in onlySafe modifier (D3)
+`344c3b897` — refactor(S3ntimentSurveyStore): center Safe authority check in onlySafe modifier (D3)
 
 ## What changed
 
