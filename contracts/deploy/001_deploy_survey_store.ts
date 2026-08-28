@@ -19,7 +19,7 @@ export default deployScript(
 		const message = await contract.read.surveyExists(['0']);
 		console.log(`Current survey count for deployer: "${message}"`);
 	},
-	// Tags allow selective deployment (e.g., --tags GreetingsRegistry)
+	// Tags allow selective deployment (e.g., --tags SurveyStore)
 	// Dependencies can be specified with: dependencies: ['OtherContract']
 	{tags: ['SurveyStore', 'SurveyStore_deploy']},
 );
