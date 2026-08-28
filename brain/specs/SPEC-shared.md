@@ -31,31 +31,61 @@ Vite-only.
 - `shared/lit/lit.service.ts` — `LitService`: thin REST client over Lit's account-key/usage-key
   API (`api.dev.litprotocol.com` / `api.chipotle.litprotocol.com`), not the `@lit-protocol/*` SDK
   used in `protocol/` (see SPEC-00 GAP-6). Handles PKP/group/action/usage-key management
-  (account-key auth) and `encrypt`/`decrypt`/`executeAction` (usage-key auth, `decrypt` wrapped in
-  `withRetry`).
+  (account-key auth) and `encrypt`/`decrypt`/`executeAction` (usage-key auth, wrapped in
+  `withRetry`). Post-merge: `createGroup` takes `pkpIds` + `cidHashes` (per-pool PKP + permitted
+  actions), `registerAction` returns a `hashedCid` (keccak256 of the CID, used for group
+  permissions), `executeAction` accepts an explicit usage key, and `createPkp`/`listPKPInGroup`/
+  `listAllPKPs` were added.
 - `shared/lit/actions/*` — Lit Action **source templates**, not code that runs in this repo. Each
   export is a function returning a JS string meant to be uploaded to Lit and executed inside its
-  TEE: `encrypt.ts` (API-key-gated, no on-chain check), `decrypt.ts` (simple pool-member check),
-  `decrypt-for-owner.ts` (pool-safe + Safe-signer check), `decrypt-for-respondent.ts`
-  (pool-member check + signature verification). The `poolId`/`contract`/`safeAddress` are baked
-  into the generated string via template literals at call time — not passed as `jsParams`.
+  TEE. Six action types are now generated per pool: `encrypt.ts` (API-key-gated, no on-chain
+  check), `decrypt.ts` (simple pool-member check), `decrypt-for-owner.ts` (pool-safe + Safe-signer
+  check), `decrypt-for-respondent.ts` (pool-member check + signature verification),
+  `get-public-key.ts` (returns the PKP's public key/address — used to derive `pkpDid`),
+  `owner-invocation.ts` (verifies a `Request owner invocation` signature + `isPoolSafe` + Safe
+  `isOwner`, then has the PKP sign a NUC invocation for a nilDB builder command), and
+  `user-delegation.ts` (verifies a `s3ntiment:submit` signature + `isPoolMember`, then has the PKP
+  sign a nilDB write delegation `iss/sub = pkpDid`, `aud = userDid`, `cmd = /nil/db/data/create`,
+  `pol = []`). The `poolId`/`contract`/`safeAddress` are baked into the generated string via
+  template literals at call time — not passed as `jsParams`. ⚠ GAP-12: `owner-invocation`,
+  `user-delegation`, and the three decrypt actions embed a hardcoded Alchemy RPC key in their
+  source.
 - `shared/lit/accs.ts` — access-control-condition builders (`accsForPoolOwner`,
   `accsForPoolMember`, `alwaysTrue`) for the SDK-based ACC path; a separate mechanism from the
   on-chain-check-inside-the-action-code path used by `decrypt-for-owner`/`decrypt-for-respondent`.
-  ⚠ UNVERIFIED which of the two gating mechanisms (ACC vs. in-action check) is actually load-bearing
-  in the current flow — both exist in source.
+  Naga vestige (DR-L1, GAP-6) — delete or quarantine.
 - `shared/nillion/nilldb.user.service.ts` — `NillDBUserService`: the respondent-side nilDB client.
-  `storeOwned`/`updateOwned` write with `owner: userDidString`, ACL granting the builder
-  `read`+`execute` but never `write` (INV-1). Delegation tokens are fetched from the backend
-  (`getUserDelegationToken`), never minted client-side.
+  **`storeOwned` is the live write path** (INV-1): `createData` with `owner: userDidString`, ACL
+  `grantee: poolConfig.pkpDid`, `read: true`, `write: false`, `execute: true`, authenticated with a
+  PKP-signed delegation token fetched from the backend (`POST /surveys/:id/delegation`), never
+  minted client-side. `storeStandard` (the old standard-collection POST-to-backend path) survives
+  but is unreferenced dead code (GAP-18). `getUserDelegationToken` still exists for the
+  legacy/back-compat delegation shape.
+- `shared/nillion/did.ts` — `publicKeyToDidKey(publicKeyHex)`: converts a secp256k1 public key to a
+  `did:key:` string (compresses an uncompressed `04…` key to `02/03…` before base58btc encoding).
+  Used by `PoolController.create` to derive the pool's `pkpDid` from the PKP public key.
+- `shared/nillion/delegations.ts` — `fetchNillionDelegation` is **entirely commented out** (dead,
+  GAP-18); the live delegation fetch lives in `nilldb.user.service.ts`.
 - `shared/evm/viem.service.ts`, `permissionless.safe.service.ts`,
   `permissionless.simple.service.ts` — chain read/write wrapper and Safe/SMC (simple modular
   account, gas-abstraction) helpers. ⚠ Not read in depth this pass.
 - `shared/survey/types.ts` — canonical `Survey`, `QuestionGroup`, `Question`, `SurveyAnswer`,
-  `Batch`, `Pool`, `Config`, `EncryptedConfig` types. `EncryptedConfig` is the shape uploaded to
-  IPFS: two independently Lit-encrypted blobs (`encryptedForOwner` with scoring,
-  `encryptedForRespondent` without) plus a builder-only `encryptedScoring` string
-  (see INV-6 in SPEC-00).
+  `Batch`, `Pool`, `PoolConfig`, `EncryptedConfig` types. Post-merge: the old `Config` type is
+  gone; **`PoolConfig`** carries `safe`, `chainId`, `litNetwork`, and the per-pool `pkpId`/
+  `pkpDid`/`groupId`; **`EncryptedConfig`** (the shape uploaded to IPFS) carries `queryIds` and
+  `createdAt` alongside the two Lit-encrypted blobs (`encryptedForOwner` with scoring,
+  `encryptedForRespondent` without) and the builder-only `encryptedScoring` string (INV-6).
+  **`Pool`** now embeds `config: PoolConfig`, so the frontends and backend resolve PKP/group
+  identity from the pool rather than hardcoding.
+- `shared/survey/queries.ts` — `createSurveyAggregationQuery(surveyId, groups)`: builds the
+  nilDB aggregation pipeline (per-question `$sum` stages + `total_responses`) that the PKP-owned
+  query runs to produce tallies.
+- `shared/survey/tally.ts` — `combineShares(nodeResults)`: sums the per-node query results into a
+  single `Record<string, number>` tally.
+- `shared/survey/collection.factory.ts` — `createSurveyCollectionSchema(config, type)` builds the
+  nilDB collection schema; `type` is now `"owned"` for live surveys (GAP-10 resolved).
+- `shared/survey/response.factory.ts` — `prepareAnswers`/`createUserDataObject`: turns raw answers
+  into the nilDB data object (`_id`, `surveyId`, `signer`, per-option `%allot` fields).
 - `shared/results/scoring.factory.ts` / `tabulate.ts` — `stripScoring`, `calculateScore`,
   `isScored`, and result aggregation logic.
 - `shared/browser/evm/waap.service.ts` — `WaapService`: wraps `@human.tech/waap-sdk` (Silk) for
@@ -75,14 +105,15 @@ N/A — this *is* the shared surface. See the entry-points table above for who c
 - Lit Action templates are **generated strings closed over pool-specific constants**, not
   parameterized at runtime — a new pool means new action source, a new CID, and a new
   `registerAction` call (see `PoolController.create` in SPEC-nillcc-backend). There is no single
-  "the decrypt action" — each pool has its own compiled decrypt-for-owner and
-  decrypt-for-respondent action.
+  "the decrypt action" — each pool has its own compiled decrypt-for-owner,
+  decrypt-for-respondent, owner-invocation and user-delegation action (six action types per pool,
+  INV-5).
 - `compactAction()` (`lit/actions/helpers.ts`) minifies action source before hashing/uploading —
   any change to an action's whitespace-sensitive behavior (there shouldn't be any, but worth
   knowing) would need to survive this transform.
 - `NillDBUserService.updateOwned` deletes-then-recreates rather than patching in place — matches
-  `NilDBBuilderService.submitResponseForUser`'s same delete-then-recreate pattern on the builder
-  side (see SPEC-nillcc-backend).
+  the delete-then-recreate pattern on the builder side (see SPEC-nillcc-backend). Note: `updateOwned`
+  is currently **unreferenced** (GAP-18) — the live path is `storeOwned` only.
 
 ---
 
@@ -136,12 +167,12 @@ PKP, done), but it makes s3ntiment the trust anchor, the governance bottleneck a
 of regulatory pressure — i.e. a platform. Explicitly killed against pillar 2.
 **Accepted cost:** onboarding friction. A sovereign pool must deploy a Safe, create a Lit Account,
 create a Group, register actions. Mitigation is tooling, not taking ownership back.
-**⚠ Status: TARGET, not current.** The live code is the SaaS posture — `LitService` holds a single
-s3ntiment account key (`VITE_LIT_API_ACCOUNT_KEY`) and `PoolController.create` provisions everything
-under it. Under Chipotle there are no "modes": SaaS vs sovereign is an *emergent property* of who
-owns the Account contract, so the migration path is real — hand the Account to the pool's Safe — but
-it has not been walked. This is also what blocks GAP-5 (`PoolController.update` — "with what
-authority?"): the answer is the pool's Safe.
+**Status: current (implemented).** `PoolController.create` now mints one PKP per pool, registers
+six actions, creates a group permitting exactly that PKP + those action CIDs, and mints a
+pool-scoped usage key (see SPEC-nillcc-backend). The walk-away posture is the live posture —
+INV-10. Residual nuance: the Lit Account that owns the PKP/group is still s3ntiment's account key
+(`VITE_LIT_API_ACCOUNT_KEY`), so the *crypto* isolation is per-pool while the *Account* is still
+platform-held — the final step of handing the Account to the pool's Safe has not been walked.
 
 ### DR-L4 — Pool constants are baked into action source at generation time
 **When:** Apr 2026.
@@ -222,30 +253,26 @@ never granted to anyone but the owner of the record.
 **Why:** it makes "we pay for the infrastructure but cryptographically cannot read your answers" a
 structural fact rather than a policy. Only the builder key needs funding, which keeps operations
 simple.
-**Status:** current as *intent*, and correct in `storeOwned`. See DR-N2 and GAP-10 for how the live
-path diverges.
+**Status: current (realized).** Post-merge the *per-pool PKP* is the collection owner and nilDB
+builder for its pool (INV-9), and the ACL grantee on every respondent record is the pool's PKP DID
+with `read`+`execute` only, never `write` (INV-1). The platform builder key is demoted to the
+scoring ECIES channel (DR-S1) and `initBuilder`; it is no longer the collection owner.
 
-### DR-N2 — Owned collections → standard collections (TEMPORARY)
+### DR-N2 — Owned collections → standard collections: SUPERSEDED
 **When:** Feb–Mar 2026, after repeated integration failures.
-**Decision:** Survey collections are created with `type: "standard"`, and responses are written by
-the **builder** on the respondent's behalf via `POST /api/surveys/:id/submit` →
-`submitResponseForUser`. `NillDBUserService.storeStandard` is the live client path.
-**Why:** owned collections did not work. `SecretVaultUserClient.createData` always routes to
-`/v1/data/owned`, which 404s or fails validation against a standard collection; switching the
-collection to `type: "owned"` then hit a different wall (`DocumentNotFoundError`, node-side
-validation rejecting the document shape). Nillion's own `llm.txt` says it plainly: *for fullstack
-apps use standard collections; owned collections aren't fully supported yet.*
-**Rejected (for now):** the owned-collection path — `storeOwned`, `owner: userDidString`, ACL
-granting the builder read+execute only. **The code is still there and still correct.**
-**⚠ Cost, stated plainly:** this is the biggest live contradiction in the system. The respondent no
-longer holds their record; the builder writes it into a builder-owned collection. "Respondents own
-their data, can edit and delete it" is currently true *operationally* (the API honours it) but not
-*cryptographically* (nothing stops the builder). Pillar 1 layer 3 — "your data is never whole in one
-place" — is weakened accordingly.
-**Exit condition:** when Nillion's owned collections stabilise, flip the client back to `storeOwned`
-and create collections with `type: "owned"` and `owner: userDidString`. Both code paths are
-deliberately retained for that reason — **do not delete `storeOwned` as dead code.**
-**Status:** current, TEMPORARY. See Q4.
+**Decision (then):** Survey collections were created with `type: "standard"`, and responses were
+written by the **builder** on the respondent's behalf via `POST /api/surveys/:id/submit` →
+`submitResponseForUser`. `NillDBUserService.storeStandard` was the live client path.
+**Why (then):** owned collections did not work. `SecretVaultUserClient.createData` always routed to
+`/v1/data/owned`, which 404'd or failed validation against a standard collection; switching the
+collection to `type: "owned"` hit a different wall (`DocumentNotFoundError`). Nillion's own
+`llm.txt` said: *for fullstack apps use standard collections; owned collections aren't fully
+supported yet.*
+**Status: SUPERSEDED (2026-08-27, owned-collections merge).** The owned-collection path is now the
+live design: collections are created `type: "owned"` and owned by the per-pool PKP (GAP-10
+resolved), and `storeOwned` is the live write path (INV-1). The standard-collection machinery
+(`storeStandard`, `submitResponseForUser`, `findSurveyResults`, the `/submit` route) is dead code
+(GAP-18). Do not resurrect it without re-reading DR-N3.
 
 ### DR-N3 — Delegation without ownership is a "convenience trap"
 **When:** Feb 2026.
@@ -257,14 +284,18 @@ walk-away test outright.
 nilDB private key encrypted to them (Lit) so they can recover it and, if needed, pay for their own
 subscription and carry on without s3ntiment. The builder proxies while it exists, but ownership never
 depends on it.
-**⚠ DRIFT (GAP-10):** the code does the opposite. `createSurveyCollection` passes
-`owner: this.builderDid.didString`. Combined with DR-N2 the current state is builder-owned collection
-*and* builder-written data — precisely the trap this DR identified. `getOwnerReadDelegation` (365-day
-delegation, policy-scoped to one collection) is the convenience layer, with no ownership underneath.
-**Status:** resolved on paper, not in code. Highest-value item to close for pillar 2.
+**Status: current (resolved in code, 2026-08-27).** The per-pool PKP — pool-owned, not
+platform-owned — is now the nilDB collection owner and signs every NUC invocation for its pool
+(INV-9, GAP-10 resolved). The convenience-trap is avoided because the PKP is the pool's own key
+material, not s3ntiment's: a pool that walks away can keep operating on its encrypted data via its
+PKP. The platform builder key no longer owns collections.
 
 ## Gaps / open questions
 
+- GAP-12 (SPEC-00): hardcoded Alchemy RPC key inside the Lit Action source templates
+  (`owner-invocation.ts`, `user-delegation.ts`, the three decrypt actions).
+- GAP-18 (SPEC-00): dead standard-collection code in `shared` — `storeStandard`,
+  `updateOwned`, `nillion/delegations.ts` (commented out).
 - `permissionless.safe.service.ts` / `permissionless.simple.service.ts` (SMC/gas-abstraction layer)
   — ⚠ UNVERIFIED, not read in depth. This is the layer the contract leans on for identity resolution
   (`ISMC(msg.sender).owner()`, DR-C6), so it is the priority for the next read pass.

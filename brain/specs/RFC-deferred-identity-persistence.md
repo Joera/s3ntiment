@@ -6,7 +6,7 @@
 | **Date** | 2026-08-27 |
 | **Author** | Recorded from working session (user proposal + review) |
 | **Affects** | `s3ntiment-contracts`, `@s3ntiment/shared` (evm, nillion, browser/evm), `nillcc-backend`, `frontend-respondents` |
-| **Relates to** | DR-I3 (supersedes), DR-N2, DR-N1, DR-C6, INV-1, INV-3, GAP-2, GAP-10 |
+| **Relates to** | DR-I3 (supersedes), DR-N2 (superseded 2026-08-27), DR-N1, DR-C6, INV-1, INV-3, GAP-2 (resolved), GAP-10 (resolved) |
 | **Decision** | Rotation preferred over wrapping. Mechanism for nilDB side pending Q1. |
 
 ---
@@ -212,21 +212,24 @@ a different `signer` value. No new capability, no user-side crypto, no new trust
 backend already holds exactly this authority. Authorization is a signature from `E` over a challenge
 naming `D`, or simply reading the chain post-rotation as source of truth.
 
-### 6.2 Under owned collections (the DR-N2 exit condition)
+### 6.2 Under owned collections (now the live path — DR-N2 superseded)
 
 **Harder, and unverified.** Records carry `owner: DID_E`. Moving them requires either a native
 ownership transfer, or delete-under-`E` plus recreate-under-`D` — client-side, two operations,
 non-atomic, both keys live simultaneously.
 
 > ⚠ **Q1 (blocking):** does `@nillion/secretvaults` expose an ownership transfer for owned records?
-> If it is delete+recreate only, the persist step becomes a client-side multi-step operation on the
-> exact code path Nillion's own documentation describes as not fully supported (DR-N2).
+> If it is delete+recreate only, the persist step becomes a client-side multi-step operation. This
+> is now the *live* path: the owned-collections merge (2026-08-27) made `storeOwned` the live write
+> path (INV-1) with the per-pool PKP as collection owner (DR-N3), so the Q1 answer gates this RFC's
+> persist step directly.
 
 ### 6.3 The coupling worth naming
 
-**Persist-by-rotation gets harder precisely when DR-N2 is reversed.** Reversing DR-N2 is already the
-top pillar-2 item (GAP-10). These two work items interact and should be planned together rather than
-discovered in sequence.
+**Persist-by-rotation is harder on the live owned path.** DR-N2 was reversed by the owned-collections
+merge (2026-08-27): owned collections are the design, GAP-10 is resolved, and `storeOwned` is the live
+write path. The harder persist-by-rotation path this section describes is therefore the *current*
+path, not a future one — the two work items are coupled now, not prospectively.
 
 ---
 
@@ -352,4 +355,5 @@ stored secret to where continuity matters rather than where authority lives.
 - **frontend-respondents** — remove login gate from entry; add post-survey persist offer with
   results as the incentive; resume flow for half-finished persists.
 - **specs** — record as **DR-I4** in SPEC-shared, noting it supersedes DR-I3; update INV-3 note;
-  cross-reference GAP-2 and GAP-10.
+  cross-reference GAP-2 and GAP-10 (both resolved by the owned-collections merge — the delegation
+  is now membership-checked in the `user-delegation` action, and the PKP owns collections).
