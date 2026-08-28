@@ -1,23 +1,7 @@
-import { encodePacked, keccak256, recoverMessageAddress, toHex } from "viem";
+import { recoverMessageAddress } from "viem";
 
 import { CardData } from "@s3ntiment/shared";
-
-
-const encodeNullifierBatchCombo = (decodedNullifier: string, decodedBatchId: string) => {
-
-    const encoder = new TextEncoder();
-    const nullifierBytes = encoder.encode(decodedNullifier);
-    const pipeBytes = encoder.encode("|");
-    const addressBytes = decodedBatchId.slice(2);
-
-    const hexStr = Array.from(nullifierBytes)
-    .concat(Array.from(pipeBytes))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('') + addressBytes;
-
-    const packedMessage = ('0x' + hexStr) as `0x${string}`;
-    return keccak256(packedMessage);
-}
+import { cardMessageHash } from "./encoding.js";
 
 
 export const parseCardURL = async (href: string): Promise<CardData | null> => {
@@ -41,7 +25,7 @@ export const parseCardURL = async (href: string): Promise<CardData | null> => {
         const decodedSignature  = decodeURIComponent(signature) as `0x${string}`;
         const decodedSurveyId   = decodeURIComponent(surveyId);
 
-        const messageHash = encodeNullifierBatchCombo(decodedNullifier, decodedBatchId);
+        const messageHash = cardMessageHash(decodedNullifier, decodedBatchId);
 
         console.log("encoded combo", messageHash)
 

@@ -13,6 +13,10 @@
       "import": "./src/index.js",
       "types": "./src/index.d.ts"
     },
+    "./invites/encoding": {
+      "import": "./dist/shared/invites/encoding.js",
+      "types": "./dist/shared/invites/encoding.d.ts"
+    },
     "./browser": {
       "import": "./src/browser/index.ts",
       "types": "./src/browser/index.ts"
