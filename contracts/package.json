@@ -30,6 +30,7 @@
 		"@rocketh/signer": "^0.19.0",
 		"@rocketh/verifier": "^0.19.3",
 		"@rocketh/viem": "^0.19.0",
+		"@s3ntiment/shared": "workspace:*",
 		"@types/node": "^25.2.3",
 		"as-soon": "^0.1.5",
 		"cross-var": "^1.1.0",

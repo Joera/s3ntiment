@@ -1,8 +1,8 @@
 import {expect} from 'earl';
 import {describe, it} from 'node:test';
 import {network} from 'hardhat';
-import {keccak256, encodePacked, concat, stringToBytes, toBytes} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
+import {signCardMessage} from '@s3ntiment/shared/invites/encoding';
 import {setupSurveyStoreFixtures} from './utils/index.js';
 
 const {provider, networkHelpers, viem} = await network.connect();
@@ -17,34 +17,15 @@ const {deployAll} = setupSurveyStoreFixtures(provider);
 //   signer = ecrecover(ethSignedHash, signature)  — must equal batchId
 // The caller must be an SMC whose owner() is the respondent's pool-wallet EOA.
 //
-// We use a locally-owned batch wallet (privateKeyToAccount) and sign the exact
-// 32-byte ethSignedHash digest so the recovered signer is deterministic.
+// cardMessageHash / signCardMessage now come from the shared encoding module
+// (@s3ntiment/shared/invites/encoding) — the single source of truth shared
+// with the frontends. The recovered signer is deterministic because we sign
+// the exact 32-byte ethSignedHash digest produced by that module.
 // ---------------------------------------------------------------------------
-
-function cardMessageHash(nullifier: string, batchId: string): `0x${string}` {
-	return keccak256(
-		encodePacked(['string', 'string', 'address'], [nullifier, '|', batchId]),
-	);
-}
 
 function createBatchWallet(byte = 'aa') {
 	// Fixed 32-byte private key → deterministic batch-wallet address.
 	return privateKeyToAccount('0x' + byte.repeat(32));
-}
-
-async function signCard(
-	batch: ReturnType<typeof createBatchWallet>,
-	nullifier: string,
-	batchAddress: string,
-) {
-	const messageHash = cardMessageHash(nullifier, batchAddress);
-	const ethSignedHash = keccak256(
-		concat([
-			stringToBytes('\x19Ethereum Signed Message:\n32'),
-			toBytes(messageHash),
-		]),
-	);
-	return batch.sign({hash: ethSignedHash});
 }
 
 describe('S3ntimentSurveyStore', function () {
@@ -525,7 +506,7 @@ describe('S3ntimentSurveyStore', function () {
 				account: safe,
 			});
 
-			const signature = await signCard(batchWallet, nullifier, batchAddress);
+			const signature = await signCardMessage(batchWallet, nullifier, batchAddress);
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,
@@ -582,7 +563,7 @@ describe('S3ntimentSurveyStore', function () {
 			for (let i = 0; i < members.length; i++) {
 				const member = members[i];
 				const nullifier = `card-${i}`;
-				const signature = await signCard(batchWallet, nullifier, batchAddress);
+				const signature = await signCardMessage(batchWallet, nullifier, batchAddress);
 				const mockSmc = await viem.deployContract('MockSMC', [member]);
 				await mockSmc.write.register([
 					S3ntimentSurveyStore.address,
@@ -630,7 +611,7 @@ describe('S3ntimentSurveyStore', function () {
 				account: otherSafe,
 			});
 
-			const signature = await signCard(batchWallet, 'card-scope', batchAddress);
+			const signature = await signCardMessage(batchWallet, 'card-scope', batchAddress);
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,
@@ -718,7 +699,7 @@ describe('S3ntimentSurveyStore', function () {
 			});
 
 			// Sign with a different wallet than the batch wallet.
-			const signature = await signCard(wrongSigner, 'card-sig', batchAddress);
+			const signature = await signCardMessage(wrongSigner, 'card-sig', batchAddress);
 
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await expect(
@@ -749,7 +730,7 @@ describe('S3ntimentSurveyStore', function () {
 				account: safe,
 			});
 
-			const signature = await signCard(batchWallet, nullifier, batchAddress);
+			const signature = await signCardMessage(batchWallet, nullifier, batchAddress);
 
 			// First use: ok
 			const smc1 = await viem.deployContract('MockSMC', [poolWallet]);
@@ -792,7 +773,7 @@ describe('S3ntimentSurveyStore', function () {
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 
 			// join once with card-1
-			let signature = await signCard(batchWallet, 'card-1', batchAddress);
+			let signature = await signCardMessage(batchWallet, 'card-1', batchAddress);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,
 				poolId,
@@ -802,7 +783,7 @@ describe('S3ntimentSurveyStore', function () {
 			]);
 
 			// second join with a fresh, valid card still reverts
-			signature = await signCard(batchWallet, 'card-2', batchAddress);
+			signature = await signCardMessage(batchWallet, 'card-2', batchAddress);
 			await expect(
 				mockSmc.write.register([
 					S3ntimentSurveyStore.address,
@@ -832,7 +813,7 @@ describe('S3ntimentSurveyStore', function () {
 			// A card signed by the batch wallet, but called directly from an EOA
 			// (not an SMC) — identity resolution ISMC(msg.sender).owner() cannot
 			// run, so registration must revert.
-			const signature = await signCard(batchWallet, 'card-eoa', batchAddress);
+			const signature = await signCardMessage(batchWallet, 'card-eoa', batchAddress);
 			await expect(
 				env.execute(S3ntimentSurveyStore, {
 					functionName: 'registerInPool',

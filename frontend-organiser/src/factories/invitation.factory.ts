@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 
 import QRCode from 'qrcode'
-import { encodePacked, keccak256, toBytes, toHex } from 'viem'
+import { keccak256, toBytes } from 'viem'
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { privateKeyToAccount } from 'viem/accounts';
-import { Batch, CardData } from '@s3ntiment/shared';
+import { Batch, CardData, signCardMessage } from '@s3ntiment/shared';
 import { IServices } from '../services/services';
 
 const BASEURL = import.meta.env.VITE_PROD == "true" ? import.meta.env.VITE_FRONTEND_PROD : import.meta.env.VITE_FRONTEND_DEV;  
@@ -62,12 +62,9 @@ export const generateCardSecrets = async (
     Array.from({ length: batch.amount }, async () => {
       const nullifier = generateRandomNullifier();
       
-      const packed = encodePacked(
-        ['string', 'string', 'address'],
-        [nullifier, '|', batch.id as `0x${string}`]
-      );
-      const messageHash = keccak256(packed);
-      const signature = await batchAccount.signMessage({ message: { raw: messageHash } });
+      // EIP-191 signature over the shared card message hash. Recoverable to
+      // batch.id via viem recoverMessageAddress, and satisfies registerInPool.
+      const signature = await signCardMessage(batchAccount, nullifier, batch.id);
       
       const url = `${BASEURL}?n=${nullifier}&b=${batch.id}&sig=${signature}&s=${batch.survey}`;
       return { nullifier, signature, url, svgString: await generateQRCodeSVG(url) };
