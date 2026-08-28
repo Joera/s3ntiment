@@ -11,10 +11,11 @@ pragma solidity ^0.8.0;
  *   - Respondents join a pool once via a physical card (one on-chain write)
  *   - Survey participation is off-chain (nilDB); no per-survey on-chain interaction
  *
- * Ownership model:
- *   - Pool owner is a Safe multisig
+ * Ownership model / authority:
+ *   - The per-pool authority is pools[poolId].safe — the Safe multisig that owns it
  *   - A pool is created implicitly when the first survey references it
- *   - All pool/survey mutations are Safe-executed (msg.sender = Safe)
+ *   - The _requirePoolSafe(poolId) internal function is the SINGLE choke-point for
+ *     every Safe-gated write (createSurvey on an existing pool, updateSurvey, registerBatch)
  *   - registerBatch() is Safe-executed (governance)
  *
  * Card generation flow (off-chain):
@@ -115,6 +116,24 @@ contract S3ntimentSurveyStore {
     error InvalidSignature();
     error AlreadyPoolMember();
 
+    // -------------------------------------------------------------------------
+    // Authority choke-point (single internal function)
+    // -------------------------------------------------------------------------
+
+    /**
+     * @dev The single authority choke-point for all Safe-gated writes.
+     *      Per-pool authority is pools[poolId].safe — the only caller permitted
+     *      to mutate a pool is that pool's Safe.
+     *        1. Existence: the pool must already be registered (else PoolNotFound).
+     *        2. Actor: msg.sender must be the pool's Safe (else NotPoolSafe).
+     *      Any future Safe-gated method must route through this function, not
+     *      re-check the Safe inline, so no privileged path can bypass auth.
+     */
+    function _requirePoolSafe(string memory poolId) internal view {
+        if (pools[poolId].safe == address(0)) revert PoolNotFound();
+        if (pools[poolId].safe != msg.sender) revert NotPoolSafe();
+    }
+
     // =========================================================================
     // Survey management (creates pool implicitly)
     // =========================================================================
@@ -148,18 +167,27 @@ contract S3ntimentSurveyStore {
         require(bytes(ipfsCid).length > 0, "IPFS CID cannot be empty");
         if (surveys[surveyId].createdAt != 0) revert SurveyAlreadyExists();
 
-        // Pool bootstrap or signer check
+        // Pool bootstrap or Safe-authority check.
         if (pools[poolId].safe == address(0)) {
-            // New pool — msg.sender becomes the Safe
+            // New pool — msg.sender becomes the Safe (no authority check yet:
+            // the pool does not exist, so there is nothing to be Safe of).
             _createPool(poolId, msg.sender);
             for (uint256 i = 0; i < batchIds.length; i++) {
                 _registerBatch(poolId, batchIds[i]);
             }
+            _recordSurvey(surveyId, poolId, ipfsCid);
         } else {
-            // Existing pool — caller must be the pool's Safe
-            if (pools[poolId].safe != msg.sender) revert NotPoolSafe();
+            // Existing pool — caller must be the pool's Safe (shared choke-point).
+            _requirePoolSafe(poolId);
+            _recordSurvey(surveyId, poolId, ipfsCid);
         }
+    }
 
+    function _recordSurvey(
+        string memory surveyId,
+        string memory poolId,
+        string memory ipfsCid
+    ) internal {
         surveys[surveyId] = Survey({
             ipfsCid: ipfsCid,
             poolId: poolId,
@@ -179,7 +207,9 @@ contract S3ntimentSurveyStore {
         Survey storage survey = surveys[surveyId];
         if (survey.createdAt == 0) revert SurveyNotFound();
 
-        if (pools[survey.poolId].safe != msg.sender) revert NotPoolSafe();
+        // Path the pool's authority through the shared choke-point; the poolId
+        // is derived from the stored survey, so its existence is guaranteed here.
+        _requirePoolSafe(survey.poolId);
 
         survey.ipfsCid = newIpfsCid;
     }
@@ -244,8 +274,7 @@ contract S3ntimentSurveyStore {
         string memory poolId,
         address batchId
     ) external {
-        if (pools[poolId].safe == address(0)) revert PoolNotFound();
-        if (pools[poolId].safe != msg.sender) revert NotPoolSafe();
+        _requirePoolSafe(poolId);
         _registerBatch(poolId, batchId);
     }
 
