@@ -7,6 +7,9 @@ shared authority modifier. No ABI/selector change; no deferred methods added.
 ## Branch
 `deepseek/method-surface`
 
+## PR
+https://github.com/Joera/s3ntiment/pull/9
+
 ## Commit
 `344c3b897` — refactor(S3ntimentSurveyStore): center Safe authority check in onlySafe modifier (D3)
 
