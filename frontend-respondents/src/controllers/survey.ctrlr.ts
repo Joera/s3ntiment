@@ -4,7 +4,7 @@ import '@s3ntiment/shared/components';
 import '../components/survey-questions.js';
 import { IServices } from '../services.js';
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
-import { fetchAndDecryptSurveyWithRespondent, isScored, Pool, Survey } from '@s3ntiment/shared';
+import { fetchAndDecryptSurveyWithRespondent, isScored, PoolConfig, Survey } from '@s3ntiment/shared';
 
 import { store } from '../state';
 import { createUserDataObject } from '@s3ntiment/shared'
@@ -19,7 +19,14 @@ export class SurveyController {
   services: IServices;
   surveyId: string;
   survey?: Survey;
-  pool?: Pool;
+  /**
+   * Pool config (pkpId/pkpDid/…) used to submit a response. It is NOT a plain
+   * store lookup — it is persisted inside the decrypted EncryptedConfig (the
+   * same `config` field the backend reads as `surveyConfig.config`), so it is
+   * plumbed out of the decrypted survey in render() rather than read off an
+   * unset `this.pool`.
+   */
+  poolConfig?: PoolConfig;
 
   constructor(services: IServices, surveyId: string) {
     this.services = services;
@@ -76,10 +83,17 @@ export class SurveyController {
 
       try {
         const survey = await fetchAndDecryptSurveyWithRespondent(
-          this.services, surveyStore, this.surveyId, this.pool!.config, BACKENDURL
+          this.services, surveyStore, this.surveyId, this.poolConfig, BACKENDURL
         );
 
         this.survey = survey;
+
+        // R1 fix: the pool config lives on the decrypted EncryptedConfig, not on
+        // a separately-set `this.pool`. Plumb it out so setSurveyListener() can
+        // dereference poolConfig.pkpId/pkpDid instead of always throwing on an
+        // unset pool.
+        this.poolConfig = (survey as any).config as PoolConfig | undefined;
+
         survey.isScored = isScored(survey.groups);
         store.setSurveyData(this.surveyId, survey);
         store.persistSurveys();
@@ -121,8 +135,8 @@ export class SurveyController {
         signature, 
         userAddress: this.services.account.getSignerAddress(),
         poolId: this.survey?.pool, 
-        pkpId: this.pool?.config.pkpId, 
-        pkpDid: this.pool?.config.pkpDid 
+        pkpId: this.poolConfig?.pkpId, 
+        pkpDid: this.poolConfig?.pkpDid 
       }
 
       const { delegation } = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/delegation`, {
@@ -133,7 +147,7 @@ export class SurveyController {
           body: JSON.stringify(args)
       }).then(r => r.json());
 
-      const result = await this.services.nillDB.storeOwned(docIUd, this.survey!, this.pool?.config!, event.detail.answers, this.surveyId, delegation)
+      const result = await this.services.nillDB.storeOwned(docIUd, this.survey!, this.poolConfig!, event.detail.answers, this.surveyId, delegation)
 
       console.log(result)
 
