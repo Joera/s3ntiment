@@ -14,8 +14,8 @@ pragma solidity ^0.8.0;
  * Ownership model / authority:
  *   - The per-pool authority is pools[poolId].safe — the Safe multisig that owns it
  *   - A pool is created implicitly when the first survey references it
- *   - The onlySafe(poolId) modifier is the SINGLE choke-point for every Safe-gated
- *     write (createSurvey on an existing pool, updateSurvey, registerBatch)
+ *   - The _requirePoolSafe(poolId) internal function is the SINGLE choke-point for
+ *     every Safe-gated write (createSurvey on an existing pool, updateSurvey, registerBatch)
  *   - registerBatch() is Safe-executed (governance)
  *
  * Card generation flow (off-chain):
@@ -117,7 +117,7 @@ contract S3ntimentSurveyStore {
     error AlreadyPoolMember();
 
     // -------------------------------------------------------------------------
-    // Authority modifier (single choke-point)
+    // Authority choke-point (single internal function)
     // -------------------------------------------------------------------------
 
     /**
@@ -126,13 +126,12 @@ contract S3ntimentSurveyStore {
      *      to mutate a pool is that pool's Safe.
      *        1. Existence: the pool must already be registered (else PoolNotFound).
      *        2. Actor: msg.sender must be the pool's Safe (else NotPoolSafe).
-     *      Any future Safe-gated method must route through this modifier, not
+     *      Any future Safe-gated method must route through this function, not
      *      re-check the Safe inline, so no privileged path can bypass auth.
      */
-    modifier onlySafe(string memory poolId) {
+    function _requirePoolSafe(string memory poolId) internal view {
         if (pools[poolId].safe == address(0)) revert PoolNotFound();
         if (pools[poolId].safe != msg.sender) revert NotPoolSafe();
-        _;
     }
 
     // =========================================================================
@@ -178,19 +177,10 @@ contract S3ntimentSurveyStore {
             }
             _recordSurvey(surveyId, poolId, ipfsCid);
         } else {
-            // Existing pool — caller must be the pool's Safe; routed through
-            // the shared onlySafe choke-point.
-            _createSurveyOnExistingPool(poolId, surveyId, ipfsCid);
+            // Existing pool — caller must be the pool's Safe (shared choke-point).
+            _requirePoolSafe(poolId);
+            _recordSurvey(surveyId, poolId, ipfsCid);
         }
-    }
-
-    // Existing-pool createSurvey path, gated by the single authority modifier.
-    function _createSurveyOnExistingPool(
-        string memory poolId,
-        string memory surveyId,
-        string memory ipfsCid
-    ) internal onlySafe(poolId) {
-        _recordSurvey(surveyId, poolId, ipfsCid);
     }
 
     function _recordSurvey(
@@ -217,17 +207,11 @@ contract S3ntimentSurveyStore {
         Survey storage survey = surveys[surveyId];
         if (survey.createdAt == 0) revert SurveyNotFound();
 
-        // Route through the shared onlySafe choke-point; the pool's authority
-        // is derived from the stored survey, so its existence is guaranteed.
-        _updateSurveyBySafe(surveyId, survey.poolId, newIpfsCid);
-    }
+        // Path the pool's authority through the shared choke-point; the poolId
+        // is derived from the stored survey, so its existence is guaranteed here.
+        _requirePoolSafe(survey.poolId);
 
-    function _updateSurveyBySafe(
-        string memory surveyId,
-        string memory poolId,
-        string memory newIpfsCid
-    ) internal onlySafe(poolId) {
-        surveys[surveyId].ipfsCid = newIpfsCid;
+        survey.ipfsCid = newIpfsCid;
     }
 
     function getSurvey(string memory surveyId)
@@ -289,7 +273,8 @@ contract S3ntimentSurveyStore {
     function registerBatch(
         string memory poolId,
         address batchId
-    ) external onlySafe(poolId) {
+    ) external {
+        _requirePoolSafe(poolId);
         _registerBatch(poolId, batchId);
     }
 
