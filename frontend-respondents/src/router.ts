@@ -6,17 +6,15 @@ import { AboutController } from './controllers/about.ctrlr.js';
 import { SurveyController } from './controllers/survey.ctrlr.js';
 import { LogoutController } from './components/logout.ctrlr.js';
 import { CardData } from '@s3ntiment/shared';
-import { Card, parseCardURL } from '@s3ntiment/shared'
+import { parseCardURL } from '@s3ntiment/shared'
 import { base } from 'viem/chains';
 import { InvalidCardController } from './controllers/invalid-card-ctrlr.js';
 import { UsedCardController } from './controllers/used-card-ctrlr.js';
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
-import { authenticate, hasParticipatingAccount } from './auth.factory.js';
 import { removeSplash } from './onpageload.js';
 import { AuthController } from './controllers/auth-ctrlr.js';
 import { CompletedController } from './controllers/completed-ctrlr.js';
-import { fetchSurvey } from '@s3ntiment/shared/browser';
-import { store } from './state/store.js';
+import { resolveRootGate, resolveSurveyGate } from './router.gates.js';
 
 
 
@@ -40,21 +38,11 @@ export const initRouter = (services: IServices) => {
 
               console.log("ROUTING STARTS")
               const cardData: CardData | null = await parseCardURL(window.location.href);
-              if (cardData == null) {
-                router.navigate('/invalid-card');
-                done();
-              } else {
-
-                const card = new Card(cardData);         
-                const cardIsUsed = await card.isUsed(services, surveyStore);
-
-                if (cardIsUsed) {
-                  router.navigate(`/used-card/${card.surveyId}`);
-                  done();
-                } else {
-                  done();
-                }
+              const decision = await resolveRootGate(services, cardData, surveyStore);
+              if (decision.navigate) {
+                router.navigate(decision.navigate);
               }
+              done();
             })();
           }
         }
@@ -90,32 +78,11 @@ export const initRouter = (services: IServices) => {
               console.log("ROUTING STARTS")
 
               const surveyId = match?.params?.surveyId || match?.data?.surveyId || '';
-              if (!surveyId) {
-                router.navigate('/surveys');
-                done();
+              const decision = await resolveSurveyGate(services, surveyStore, surveyId);
+              if (decision.navigate) {
+                router.navigate(decision.navigate);
               }
-
-              const [ipfsCid, poolId, createdAt] = await fetchSurvey(services, surveyStore, surveyId);
-
-              store.setSurveyData(surveyId, {
-                  id: surveyId,
-                  pool: poolId
-              })
-
-              store.setActiveSurvey(surveyId);
-
-              // store in session // or LS
-              let isParticipant = await hasParticipatingAccount(services, poolId);
-              if(!isParticipant) {
-                isParticipant = await authenticate(services, poolId)  // separate route // with controller + spinner ? 
-              }
-              if (isParticipant) {
-                console.log("isParticipant")
-                done()
-              } else {
-                router.navigate('/invalid-card');
-                done()
-              }
+              done();
             })();
           }
         }
