@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "dev": "vite",
     "build": "NODE_OPTIONS='--max-old-space-size=16384'  vite build",
     "preview": "vite preview"
@@ -17,6 +17,7 @@
   "devDependencies": {
     "@types/d3": "^7.4.3",
     "@types/node": "^24.10.9",
+    "vitest": "^4.1.11",
     "glob": "^11.1.0",
     "sass-embedded": "^1.97.3",
     "vite": "^7.3.1",
