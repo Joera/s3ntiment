@@ -25,10 +25,19 @@ export class NilDBBuilderService {
     builderSigner: Signer;
     builderDid: Did | undefined;
     builderClient: any;
+    // Injectable so tests can avoid the production 5s settle delay without
+    // changing production behavior (default matches the original hardcoded 5000ms).
+    findResultsDelay: number = 5000;
 
-    constructor() {
+    constructor(builderClient?: any) {
         this.builderKey = config.BUILDER_KEY;
         this.builderSigner = Signer.fromPrivateKey(this.builderKey);
+        // Optional injected builder client for testability. When omitted the
+        // client stays unset and is built later by initBuilder() exactly as
+        // before, so production behavior is unchanged.
+        if (builderClient) {
+            this.builderClient = builderClient;
+        }
     }
 
     async initBuilder() {
@@ -190,7 +199,7 @@ export class NilDBBuilderService {
     }
 
     async findSurveyResults(surveyId: string, groups: QuestionGroup[], signature: any) {
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, this.findResultsDelay));
 
         try {
             const rawResults = await this.builderClient.findData({
