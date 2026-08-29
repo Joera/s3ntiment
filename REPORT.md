@@ -1,67 +1,72 @@
-# D3 — Centralize Safe authority check into a single `_requirePoolSafe` choke-point
+# §5-A — Safe-gated governance prune `revokeMember`
 
-Implements **D3** from `brain/specs/s3ntiment-survey-store-method-surface-2026-08-28.md`:
-a pure, signature-preserving refactor that centralizes the duplicated Safe checks into one
-shared authority choke-point. No ABI/selector change; no deferred methods added.
+Implements **§5-A** from `brain/specs/s3ntiment-survey-store-method-surface-2026-08-28.md`:
+a new Safe-gated governance write that removes a member from a pool.
 
 ## Branch
-`deepseek/method-surface`
-
-## PR
-https://github.com/Joera/s3ntiment/pull/9
+`deepseek/revoke-member` (based on `origin/main` @ `b5e622671`, which already contains the merged D3 change)
 
 ## Commit
-`508a409c` — fix(S3ntimentSurveyStore): use internal _requirePoolSafe auth function (D3)
+`7ee6769dc` — `feat(S3ntimentSurveyStore): add Safe-gated revokeMember (spec §5-A)`
+
+## PR
+opened against `origin/main` (see PR number reported alongside).
 
 ## What changed
 
 **`contracts/src/S3ntimentSurveyStore/S3ntimentSurveyStore.sol`**
 
-The D3 authority choke-point is implemented as a single **internal function** rather than a
-Solidity `modifier`, because the repo's Solidity resolves modifier reference-type parameters
-to `calldata`: a `string memory`-declared modifier cannot be invoked with a `memory` string,
-and the args cannot be made `calldata` without breaking the zero-ABI-change constraint
-(`updateSurvey` derives its `poolId` internally; the internal helpers take `memory` strings).
+Added one new external function — no other external signature changed (zero ABI
+change to existing methods), no new storage, no events (the file emits none; §2 kept).
 
 ```solidity
-function _requirePoolSafe(string memory poolId) internal view {
-    if (pools[poolId].safe == address(0)) revert PoolNotFound();
-    if (pools[poolId].safe != msg.sender) revert NotPoolSafe();
+function revokeMember(string memory poolId, address member) external {
+    _requirePoolSafe(poolId);
+    poolMembers[poolId][member] = false;
 }
 ```
 
-- `_requirePoolSafe` is the single choke-point for every Safe-gated write: it enforces
-  `PoolNotFound()`-then-`NotPoolSafe()` ordering.
-- Applied through all three Safe-gated write functions with **zero external ABI/selector
-  change** (no external function signature line changed):
-  - `createSurvey` — bootstrap branch preserved exactly (new pool ⇒ `msg.sender` becomes the
-    Safe, batches registered, survey recorded); the *existing-pool* path calls
-    `_requirePoolSafe(poolId)` before recording the survey.
-  - `updateSurvey` — checks `SurveyNotFound()` first, then calls
-    `_requirePoolSafe(survey.poolId)` (poolId derived from the stored survey, so its existence
-    is already guaranteed), then writes the CID.
-  - `registerBatch` — calls `_requirePoolSafe(poolId)` at the top before registering the batch.
-- Removed the previous modifier-wrapped internal wrappers (`_createSurveyOnExistingPool`,
-  `_updateSurveyBySafe`) — gated paths now call the shared auth function directly.
-- **Not added** (explicitly deferred): `revokeMember`, `registerInPoolSigned`, `nonce` storage,
-  and any rotation/key-management method. `registerInPool` keeps its own card-based auth path.
+- **Auth routing**: guards through the existing `_requirePoolSafe(poolId)` internal
+  choke-point from the D3 refactor. The spec's literal `onlySafe(poolId)` is *not*
+  a Solidity modifier here (a `string memory`-modifier can't compile against the
+  repo's calldata resolution), and the pool's Safe is *not* re-checked inline — the
+  shared choke-point enforces `PoolNotFound()`-then-`NotPoolSafe()` ordering, so no
+  privileged path bypasses a Single Safe-gated write.
+- **Semantics**: after the auth gate, `poolMembers[poolId][member] = false`. This is
+  idempotent — revoking an already-unregistered member is a safe no-op (no revert),
+  consistent with governance writes elsewhere in the file (`registerBatch` similarly
+  does not require a pre-existing entry; there's no separate membership-not-found
+  error in the contract). The ordering is `PoolNotFound()` (unknown pool) before
+  `NotPoolSafe()` (non-safe caller), matching `_requirePoolSafe`.
+- **Doc header**: the authority doc-comment header now lists `revokeMember` alongside
+  the other Safe-gated writes through the choke-point and marks `revokeMember()` as
+  Safe-executed (governance).
+
+**`contracts/test/S3ntimentSurveyStore.test.ts`**
+
+New `describe('revokeMember (Safe-gated governance)')` block (tests below).
+
+No events were added; no `registerInPoolSigned`, no nonce storage, no rotation
+methods were added (explicitly out of scope).
+
+## Tests added
+
+- A pool Safe can revoke a registered member; `isPoolMember` then returns `false`.
+- `revokeMember` by a non-safe caller reverts `NotPoolSafe()`.
+- `revokeMember` for an unknown pool reverts `PoolNotFound()`.
+- Revoking an already-unregistered member is handled sanely as an **idempotent no-op**
+  (documented choice above) — the second revoke succeeds and membership stays `false`.
+- Bonus scoping test: revoking a member from one pool does not affect that member's
+  membership in another pool.
 
 ## Test gate
 
-Observed on the **committed HEAD** after a full clean rebuild (`rm -rf artifacts cache
-generated`), run from the `contracts` workspace of the worktree:
+Observed on the committed HEAD (`7ee6769dc`) from the `contracts` workspace of the
+worktree:
 
 ```
 cd contracts && pnpm exec hardhat test
 ```
 
-Result: **36 passing, 0 failing** (nodejs test runner).
-
-- `createSurvey` on an existing pool, non-safe caller ⇒ `NotPoolSafe` (test present + green)
-- `updateSurvey` by non-safe ⇒ `NotPoolSafe` (test present + green)
-- `registerBatch` by non-safe ⇒ `NotPoolSafe` (test present + green)
-- `PoolNotFound` ordering verified where applicable (e.g. `registerBatch` for an unknown pool,
-  `getPool` for an unknown pool).
-
-The full existing suite remains green (pool/survey lifecycle, getters, batch management, and
-the full `registerInPool` matrix).
+Result: **41 passing, 0 failing** (nodejs test runner; the prior 36 stay green plus
+5 new revokeMember tests). Exit code 0.
