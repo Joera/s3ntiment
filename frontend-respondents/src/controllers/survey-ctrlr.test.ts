@@ -298,3 +298,55 @@ describe('SurveyController.destroy() / process()', () => {
     await expect(ctrl.process()).resolves.toBeUndefined();
   });
 });
+
+describe('SurveyController cold-start regression (R1 pool-config gap), pinned', () => {
+  // This suite DOCUMENTS the known, intentionally-deferred chicken-and-egg
+  // described in SPEC-frontend-respondents.md Gaps: on a FRESH controller's
+  // first render() `this.poolConfig` is still undefined when forwarded into
+  // fetchAndDecryptSurveyWithRespondent. The real shared fn derefs
+  // `poolConfig.pkpId`, so the first render throws and lands in renderWarning.
+  // We pin that CURRENT behaviour here so it cannot silently change while the
+  // human resolution (source poolConfig before first decrypt) is still pending.
+  // We deliberately do NOT pre-seed (ctrl as any).poolConfig and do NOT fix the
+  // gap — the shared-fn mock below replicates the real deref-on-undefined so the
+  // test exercises the same failure path production would.
+  it('fresh controller + un-seeded poolConfig -> renderWarning, no navigate, no renderTemplate', async () => {
+    primeStore();
+    // Replicate the real shared decrypt fn: it dereferences poolConfig.pkpId,
+    // so an undefined poolConfig throws exactly like production on a fresh
+    // controller's first render.
+    h.decryptImpl.current = (...args: any[]) => {
+      const poolConfig = args[3];
+      if (!poolConfig) {
+        throw new Error("Cannot read properties of undefined (reading 'pkpId')");
+      }
+      return DECRYPTED_SURVEY;
+    };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const ctrl = new SurveyController(fakeServices(), SURVEY_ID);
+    // NOTE: intentionally no `(ctrl as any).poolConfig = ...` here — that is
+    // exactly the deferred R1 gap we are pinning.
+    await ctrl.render();
+
+    const app: any = (globalThis as any).document.querySelector('#app');
+
+    // landed in renderWarning, not renderTemplate.
+    expect(app.innerHTML).toContain('Decryption failed');
+    expect(app.innerHTML).not.toContain('survey-questions');
+
+    // fetch attempted with undefined poolConfig (the gap) then rejected
+    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      SURVEY_ID,
+      undefined,
+      undefined,
+    );
+
+    // no navigation and no submission listener were reached
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect((globalThis as any).__surveyGetListener('survey-complete')).toBeUndefined();
+    expect(consoleError).toHaveBeenCalled();
+  });
+});
