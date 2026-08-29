@@ -16,8 +16,9 @@ pragma solidity ^0.8.0;
  *   - A pool is created implicitly when the first survey references it
  *   - The _requirePoolSafe(poolId) internal function is the SINGLE choke-point for
  *     every Safe-gated write (createSurvey on an existing pool, updateSurvey, registerBatch,
- *     revokeMember)
- *   - registerBatch() and revokeMember() are Safe-executed (governance)
+ *     revokeMember, revokeBatch, setBatchMaxCards)
+ *   - registerBatch(), revokeBatch(), setBatchMaxCards() and revokeMember() are
+ *     Safe-executed (governance)
  *
  * Card generation flow (off-chain):
  *   1. Pool Safe signs a random seed → derives an ephemeral batch wallet
@@ -77,6 +78,8 @@ contract S3ntimentSurveyStore {
     struct Batch {
         uint256 createdAt;
         uint256 cardCount;      // cards redeemed from this batch
+        bool revoked;           // Safe has revoked this print-run batch
+        uint256 maxCards;       // optional per-batch card cap; 0 = unlimited
     }
 
     // -------------------------------------------------------------------------
@@ -114,6 +117,8 @@ contract S3ntimentSurveyStore {
     error SurveyAlreadyExists();
     error BatchNotFound();
     error BatchAlreadyRegistered();
+    error BatchRevoked();
+    error BatchMaxCardsReached();
     error InvalidBatchId();
     error InvalidMemberAddress();
     error NullifierAlreadyUsed();
@@ -210,6 +215,9 @@ contract S3ntimentSurveyStore {
     ) external {
         Survey storage survey = surveys[surveyId];
         if (survey.createdAt == 0) revert SurveyNotFound();
+        // Mirrors createSurvey's non-empty guard — a Safe can't blank the survey
+        // metadata with an empty CID via a successful updateSurvey (audit #8).
+        require(bytes(newIpfsCid).length > 0, "IPFS CID cannot be empty");
 
         // Path the pool's authority through the shared choke-point; the poolId
         // is derived from the stored survey, so its existence is guaranteed here.
@@ -282,6 +290,51 @@ contract S3ntimentSurveyStore {
         _registerBatch(poolId, batchId);
     }
 
+    /**
+     * @dev Revoke a print-run batch for a pool. Safe-gated: msg.sender must be
+     *      the pool's Safe, routed through the shared _requirePoolSafe choke-point.
+     *
+     *      Once revoked, batches[poolId][batchId].revoked is set and no further
+     *      card from that batch can be redeemed (registerInPool reverts with
+     *      BatchRevoked BEFORE any nullifier burn or membership write). This gives
+     *      a pool a surgical on-chain recovery for a leaked/compromised batch key
+     *      without destroying the whole pool.
+     *
+     *      Revoking is idempotent (no-op on a double revoke), consistent with the
+     *      idempotent revokeMember precedent. Revoking an unregistered batch
+     *      reverts with BatchNotFound, since there is nothing to revoke.
+     *
+     * @param poolId   Pool the batch belongs to
+     * @param batchId  Batch wallet address to revoke
+     */
+    function revokeBatch(string memory poolId, address batchId) external {
+        _requirePoolSafe(poolId);
+        Batch storage batch = batches[poolId][batchId];
+        if (batch.createdAt == 0) revert BatchNotFound();
+        batch.revoked = true;
+    }
+
+    /**
+     * @dev Set an optional per-batch card cap (0 = unlimited). Safe-gated through
+     *      the shared _requirePoolSafe choke-point. Once cards redeemed reach the
+     *      cap, registerInPool stops accepting further cards from that batch,
+     *      bounding the blast radius of a leaked batch key without revoking it.
+     *
+     * @param poolId    Pool the batch belongs to
+     * @param batchId   Batch wallet address to cap
+     * @param maxCards  Maximum redeemable cards; 0 clears the cap (unlimited)
+     */
+    function setBatchMaxCards(
+        string memory poolId,
+        address batchId,
+        uint256 maxCards
+    ) external {
+        _requirePoolSafe(poolId);
+        Batch storage batch = batches[poolId][batchId];
+        if (batch.createdAt == 0) revert BatchNotFound();
+        batch.maxCards = maxCards;
+    }
+
     function getBatch(string memory poolId, address batchId)
         external
         view
@@ -318,7 +371,18 @@ contract S3ntimentSurveyStore {
         bytes memory signature
     ) external {
         if (pools[poolId].safe == address(0)) revert PoolNotFound();
-        if (batches[poolId][batchId].createdAt == 0) revert BatchNotFound();
+        Batch storage batch = batches[poolId][batchId];
+        if (batch.createdAt == 0) revert BatchNotFound();
+        // A revoked batch (audit #4) must never burn a nullifier or write
+        // membership — gate it BEFORE any nullifier/signature work. This also
+        // lets a leaked batch key be surgically killed on-chain (see revokeBatch).
+        if (batch.revoked) revert BatchRevoked();
+        // Optional per-batch card cap (audit #4 blast-radius stowaway). Also
+        // checked before any nullifier work so an over-cap card reverts cleanly
+        // and never consumes its nullifier.
+        if (batch.maxCards != 0 && batch.cardCount >= batch.maxCards) {
+            revert BatchMaxCardsReached();
+        }
 
         // Verify the card signature over the pool/contract/chain-bound digest.
         //   messageHash = keccak256(abi.encode(poolId, nullifier, batchId, address(this), block.chainid))
@@ -339,7 +403,7 @@ contract S3ntimentSurveyStore {
 
         // Burn nullifier (scoped per pool; messageHash already embeds poolId).
         usedNullifiers[poolId][messageHash] = true;
-        batches[poolId][batchId].cardCount++;
+        batch.cardCount++;
 
         // Resolve identity: SMC owner is the pool wallet EOA
         address poolWallet = ISMC(msg.sender).owner();
@@ -415,7 +479,9 @@ contract S3ntimentSurveyStore {
 
         batches[poolId][batchId] = Batch({
             createdAt: block.timestamp,
-            cardCount: 0
+            cardCount: 0,
+            revoked: false,
+            maxCards: 0
         });
 
         poolBatchIds[poolId].push(batchId);
