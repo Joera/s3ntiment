@@ -39,6 +39,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
@@ -70,6 +71,7 @@
     "fs": "0.0.1-security",
     "multiformats": "^13.4.2",
     "permissionless": "^0.3.4",
-    "viem": "^2.46.2"
+    "viem": "^2.46.2",
+    "vitest": "^4.1.11"
   }
 }
