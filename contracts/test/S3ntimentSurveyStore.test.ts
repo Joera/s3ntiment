@@ -235,7 +235,7 @@ describe('S3ntimentSurveyStore', function () {
 			).toBeRejectedWith(`custom error 'NotPoolSafe()'`);
 		});
 
-		it('ignores batchIds when adding a survey to an existing pool', async function () {
+		it('reverts when batchIds are passed to an existing pool (InvalidBatchIds)', async function () {
 			const {env, S3ntimentSurveyStore, unnamedAccounts} =
 				await networkHelpers.loadFixture(deployAll);
 			const safe = unnamedAccounts[0];
@@ -247,25 +247,68 @@ describe('S3ntimentSurveyStore', function () {
 				args: ['s1', poolId, 'QmCid1', []],
 				account: safe,
 			});
-			// A batch passed to a later createSurvey on an existing pool is ignored.
-			await env.execute(S3ntimentSurveyStore, {
-				functionName: 'createSurvey',
-				args: ['s2', poolId, 'QmCid2', [batch]],
-				account: safe,
-			});
+			// Audit #9: a non-empty batchIds array on an EXISTING pool is a caller
+			// mistake — it must revert explicitly, not be silently dropped (cards
+			// would later revert BatchNotFound at redemption).
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'createSurvey',
+					args: ['s2', poolId, 'QmCid2', [batch]],
+					account: safe,
+				}),
+			).toBeRejectedWith(`custom error 'InvalidBatchIds()'`);
 
+			// The whole tx reverted: the survey was NOT added...
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'surveyExists',
+					args: ['s2'],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveys',
+					args: [poolId],
+				}),
+			).toEqual(['s1']);
+			// ...and no batch was registered.
 			await expect(
 				env.read(S3ntimentSurveyStore, {
 					functionName: 'getBatch',
 					args: [poolId, batch],
 				}),
 			).toBeRejectedWith(`custom error 'BatchNotFound()'`);
-
 			const poolBatches = await env.read(S3ntimentSurveyStore, {
 				functionName: 'getPoolBatches',
 				args: [poolId],
 			});
 			expect(poolBatches).toEqual([]);
+		});
+
+		it('still lets the Safe add a survey to an existing pool with an empty batchIds array', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-ignore-batch-empty';
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', []],
+				account: safe,
+			});
+			// An EMPTY batchIds array on an existing pool stays valid (no-op guard).
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s2', poolId, 'QmCid2', []],
+				account: safe,
+			});
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveys',
+					args: [poolId],
+				}),
+			).toEqual(['s1', 's2']);
 		});
 
 		it('reverts during createSurvey bootstrap for a zero-address batch (InvalidBatchId)', async function () {
@@ -366,6 +409,35 @@ describe('S3ntimentSurveyStore', function () {
 					account: unnamedAccounts[0],
 				}),
 			).toBeRejectedWith(`custom error 'SurveyNotFound()'`);
+		});
+
+		it('reverts when updating a survey with an empty CID (IPFS CID cannot be empty)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', 'pool-up-empty-cid', 'QmCid1', []],
+				account: safe,
+			});
+
+			// updateSurvey mirrors createSurvey: an empty CID must revert (audit #8).
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'updateSurvey',
+					args: ['s1', ''],
+					account: safe,
+				}),
+			).toBeRejectedWith(
+				`VM Exception while processing transaction: reverted with reason string 'IPFS CID cannot be empty'`,
+			);
+
+			// The original CID is untouched by the reverted update.
+			const survey = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getSurvey',
+				args: ['s1'],
+			});
+			expect(survey[0]).toEqual('QmCid1');
 		});
 	});
 
@@ -1509,6 +1581,328 @@ describe('S3ntimentSurveyStore', function () {
 					args: [poolB, member],
 				}),
 			).toEqual(true);
+		});
+	});
+
+	describe('revokeBatch (Safe-gated governance)', function () {
+		// Set up a pool with one batch wallet and return the signing material.
+		async function setupBatch({env, S3ntimentSurveyStore, poolId, safe}) {
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			const surveyId = 'revoke-batch-srv-' + poolId;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: [surveyId, poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+			return {batchWallet, batchAddress};
+		}
+
+		it('reverts revokeBatch when called by a non-safe (NotPoolSafe)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const nonSafe = unnamedAccounts[1];
+			const poolId = 'pool-revoke-batch-auth';
+			const {batchAddress} = await setupBatch({env, S3ntimentSurveyStore, poolId, safe});
+
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'revokeBatch',
+					args: [poolId, batchAddress],
+					account: nonSafe,
+				}),
+			).toBeRejectedWith(`custom error 'NotPoolSafe()'`);
+		});
+
+		it('reverts revokeBatch for an unknown pool (PoolNotFound)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'revokeBatch',
+					args: ['ghost-pool', '0x' + '11'.repeat(20)],
+					account: unnamedAccounts[0],
+				}),
+			).toBeRejectedWith(`custom error 'PoolNotFound()'`);
+		});
+
+		it('reverts revokeBatch for a never-registered batch (BatchNotFound)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-revoke-batch-missing';
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', []],
+				account: safe,
+			});
+
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'revokeBatch',
+					args: [poolId, '0x' + '55'.repeat(20)],
+					account: safe,
+				}),
+			).toBeRejectedWith(`custom error 'BatchNotFound()'`);
+		});
+
+		it('lets the Safe revoke a batch; subsequent registration reverts (BatchRevoked) without burning the nullifier', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWallet = unnamedAccounts[3];
+			const poolId = 'pool-revoke-batch';
+			const {batchWallet, batchAddress} = await setupBatch({env, S3ntimentSurveyStore, poolId, safe});
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeBatch',
+				args: [poolId, batchAddress],
+				account: safe,
+			});
+
+			// A valid card from the revoked batch can no longer be redeemed.
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, 'card-revoked', batchAddress);
+			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
+			await expect(
+				mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					'card-revoked',
+					batchAddress,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'BatchRevoked()'`);
+
+			// The whole tx reverted BEFORE any nullifier work — the card's
+			// nullifier is NOT burned and the wallet is not a member.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolId, 'card-revoked', batchAddress],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, poolWallet],
+				}),
+			).toEqual(false);
+		});
+
+		it('keeps batch revocation scoped per pool (same batch address in pool B unaffected)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWallet = unnamedAccounts[3];
+			const poolA = 'pool-revoke-batch-scope-a';
+			const poolB = 'pool-revoke-batch-scope-b';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+
+			// The same batch wallet is registered in both pools.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['a1', poolA, 'QmCidA', [batchAddress]],
+				account: safe,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['b1', poolB, 'QmCidB', [batchAddress]],
+				account: safe,
+			});
+
+			// Revoke the batch in pool A only.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeBatch',
+				args: [poolA, batchAddress],
+				account: safe,
+			});
+
+			// Redeeming in pool A reverts (BatchRevoked).
+			const contextA = cardContext(S3ntimentSurveyStore.address, poolA);
+			const sigA = await signCardMessage(batchWallet, contextA, 'card-scope-a', batchAddress);
+			const smc = await viem.deployContract('MockSMC', [poolWallet]);
+			await expect(
+				smc.write.register([
+					S3ntimentSurveyStore.address,
+					poolA,
+					'card-scope-a',
+					batchAddress,
+					sigA,
+				]),
+			).toBeRejectedWith(`custom error 'BatchRevoked()'`);
+
+			// The same batch address in pool B is untouched — redemption succeeds.
+			const contextB = cardContext(S3ntimentSurveyStore.address, poolB);
+			const sigB = await signCardMessage(batchWallet, contextB, 'card-scope-b', batchAddress);
+			await smc.write.register([
+				S3ntimentSurveyStore.address,
+				poolB,
+				'card-scope-b',
+				batchAddress,
+				sigB,
+			]);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolB, poolWallet],
+				}),
+			).toEqual(true);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolB, 'card-scope-b', batchAddress],
+				}),
+			).toEqual(true);
+		});
+
+		it('idempotently no-ops a double revoke', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-revoke-batch-double';
+			const {batchAddress} = await setupBatch({env, S3ntimentSurveyStore, poolId, safe});
+
+			// First revoke sets the revoked flag.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeBatch',
+				args: [poolId, batchAddress],
+				account: safe,
+			});
+			// Revoking again is a safe no-op (idempotent, mirroring revokeMember).
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeBatch',
+				args: [poolId, batchAddress],
+				account: safe,
+			});
+		});
+	});
+
+	describe('setBatchMaxCards (per-batch card cap)', function () {
+		it('lets the Safe set a cap and blocks registration one card past the cap', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-cap';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+
+			// Cap this batch at 2 cards.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'setBatchMaxCards',
+				args: [poolId, batchAddress, 2],
+				account: safe,
+			});
+
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const members = [unnamedAccounts[3], unnamedAccounts[4]];
+			for (let i = 0; i < members.length; i++) {
+				const nullifier = `card-cap-${i}`;
+				const signature = await signCardMessage(batchWallet, context, nullifier, batchAddress);
+				const mockSmc = await viem.deployContract('MockSMC', [members[i]]);
+				await mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					nullifier,
+					batchAddress,
+					signature,
+				]);
+			}
+
+			// cardCount reached the cap (2) — both members registered.
+			const batchData = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getBatch',
+				args: [poolId, batchAddress],
+			});
+			expect(batchData[1]).toEqual(2n);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, members[0]],
+				}),
+			).toEqual(true);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, members[1]],
+				}),
+			).toEqual(true);
+
+			// A third card — one past the cap — reverts and does not burn its nullifier.
+			const overCapMember = unnamedAccounts[5];
+			const sigOver = await signCardMessage(batchWallet, context, 'card-cap-2', batchAddress);
+			const smcOver = await viem.deployContract('MockSMC', [overCapMember]);
+			await expect(
+				smcOver.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					'card-cap-2',
+					batchAddress,
+					sigOver,
+				]),
+			).toBeRejectedWith(`custom error 'BatchMaxCardsReached()'`);
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolId, 'card-cap-2', batchAddress],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, overCapMember],
+				}),
+			).toEqual(false);
+		});
+
+		it('reverts setBatchMaxCards when called by a non-safe (NotPoolSafe)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const nonSafe = unnamedAccounts[1];
+			const poolId = 'pool-cap-auth';
+			const batch = '0x' + '66'.repeat(20);
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batch]],
+				account: safe,
+			});
+
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'setBatchMaxCards',
+					args: [poolId, batch, 10],
+					account: nonSafe,
+				}),
+			).toBeRejectedWith(`custom error 'NotPoolSafe()'`);
+		});
+
+		it('reverts setBatchMaxCards for a never-registered batch (BatchNotFound)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-cap-missing';
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', []],
+				account: safe,
+			});
+
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'setBatchMaxCards',
+					args: [poolId, '0x' + '77'.repeat(20), 10],
+					account: safe,
+				}),
+			).toBeRejectedWith(`custom error 'BatchNotFound()'`);
 		});
 	});
 });
