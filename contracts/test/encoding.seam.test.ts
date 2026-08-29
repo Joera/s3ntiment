@@ -1,7 +1,7 @@
 import {expect} from 'earl';
 import {describe, it} from 'node:test';
 import {network} from 'hardhat';
-import {keccak256, recoverMessageAddress} from 'viem';
+import {keccak256, encodeAbiParameters, parseAbiParameters, recoverMessageAddress} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {
 	cardMessageHash,
@@ -18,69 +18,103 @@ function createBatchWallet(byte = 'aa') {
 	return privateKeyToAccount('0x' + byte.repeat(32));
 }
 
+// Local hardhat chain id (EDR-simulated default network). Must equal
+// block.chainid as seen by the deployed contract, so the off-chain digest
+// matches the on-chain oracle.
+const CHAIN_ID = BigInt(await provider.request({method: 'eth_chainId'}));
+
 // ---------------------------------------------------------------------------
 // SEAM PINNING TEST — shared card encoding (@s3ntiment/shared/invites/encoding).
 //
 // Proves that the shared `cardMessageHash` / `signCardMessage` used by the
 // frontends (invitation.factory, card.factory) and by the contract tests all
 // agree on the SAME bytes, and that those bytes satisfy the on-chain oracle
-// S3ntimentSurveyStore.registerInPool:
-//   messageHash   = keccak256(abi.encodePacked(nullifier, "|", batchId))
+// S3ntimentSurveyStore.registerInPool. CARD-V2 digest (breaking):
+//   messageHash   = keccak256(abi.encode(poolId, nullifier, batchId,
+//                                       contractAddress, chainId))
 //   ethSignedHash = keccak256("\x19Ethereum Signed Message:\n32" + messageHash)
 //   signer        = ecrecover(ethSignedHash, signature) == batchId
 //
-// This is seam coverage for the four previously-independent implementations
-// of the card message hash (see brain/audits/seam-coverage-exploration-...md).
+// This is seam coverage for the previously-independent implementations of the
+// card message hash (see brain/audits/seam-coverage-exploration-...md).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// (a) PINNED LEGACY form. This is the old hand-rolled byte-concatenation that
-// used to live (private) in shared/src/shared/invites/card.factory.ts as
-// `encodeNullifierBatchCombo`: UTF-8(nullifier) ++ "|" ++ raw 20-byte batchId,
-// then keccak256. It is kept here as a reference implementation and pinned to
-// stay byte-identical to the shared `cardMessageHash`.
+// Reference implementation of the ON-CHAIN digest, recomputed in TS exactly as
+// the Solidity oracle does (abi.encode of the five fields in order):
+//   messageHash = keccak256(abi.encode(poolId, nullifier, batchId, store, chainId))
+// viem's encodeAbiParameters(parseAbiParameters('string,string,address,address,uint256'),
+// [...]) reproduces Solidity's field offsets + dynamic-length prefixes.
 // ---------------------------------------------------------------------------
-function legacyEncodeNullifierBatchCombo(
+function referenceCardMessageHash(
+	poolId: string,
 	nullifier: string,
 	batchId: string,
+	storeAddress: string,
+	chainId: bigint,
 ): `0x${string}` {
-	const nullifierBytes = new TextEncoder().encode(nullifier);
-	const pipeBytes = new TextEncoder().encode('|');
-	const addressBytes = batchId.slice(2);
-
-	const hexStr =
-		Array.from(nullifierBytes)
-			.concat(Array.from(pipeBytes))
-			.map(b => b.toString(16).padStart(2, '0'))
-			.join('') + addressBytes;
-
-	return keccak256(('0x' + hexStr) as `0x${string}`);
+	return keccak256(
+		encodeAbiParameters(
+			parseAbiParameters('string,string,address,address,uint256'),
+			[poolId, nullifier, batchId, storeAddress, chainId],
+		),
+	);
 }
 
-describe('shared card encoding seam (encoding)', function () {
+describe('shared card encoding seam (encoding, card-v2)', function () {
 	describe('cardMessageHash', function () {
-		it('pins the legacy hand-rolled byte-concat form (card.factory encodeNullifierBatchCombo)', function () {
+		it('pins the on-chain abi.encode form (poolId, nullifier, batchId, storeAddress, chainId)', function () {
 			const nullifier = 'some-base64url-nullifier';
 			const batchId = '0x' + 'ab'.repeat(20);
+			const storeAddress = '0x' + 'cd'.repeat(20);
+			const context = {poolId: 'pool-1', storeAddress, chainId: 31337n};
 
-			expect(cardMessageHash(nullifier, batchId)).toEqual(
-				legacyEncodeNullifierBatchCombo(nullifier, batchId),
+			expect(cardMessageHash(context, nullifier, batchId)).toEqual(
+				referenceCardMessageHash(
+					context.poolId,
+					nullifier,
+					batchId,
+					storeAddress,
+					context.chainId,
+				),
 			);
 		});
 
+		it('scopes the digest by pool, contract and chain (varying each changes the hash)', function () {
+			const nullifier = 'n';
+			const batchId = '0x' + 'ab'.repeat(20);
+			const base = {
+				poolId: 'pool-1',
+				storeAddress: '0x' + 'cd'.repeat(20),
+				chainId: 31337n,
+			};
+			const baseHash = cardMessageHash(base, nullifier, batchId);
+			// Each binding dimension changes the digest.
+			expect(cardMessageHash({...base, poolId: 'pool-2'}, nullifier, batchId)).not.toEqual(baseHash);
+			expect(cardMessageHash({...base, storeAddress: '0x' + 'ef'.repeat(20)}, nullifier, batchId)).not.toEqual(baseHash);
+			expect(cardMessageHash({...base, chainId: 8453n}, nullifier, batchId)).not.toEqual(baseHash);
+		});
+
 		it('produces a stable deterministic digest (regression canary)', function () {
-			// Fixed nullifier (22 chars) + batchId -> fixed keccak digest.
+			// Fixed inputs -> fixed keccak digest (card-v2 abi.encode binding).
 			const nullifier = ('A' + 'a'.repeat(21)) as string;
 			const batchId = ('0x' + '11'.repeat(20)) as `0x${string}`;
-			const hash = cardMessageHash(nullifier, batchId);
+			const storeAddress = ('0x' + 'ee'.repeat(20)) as `0x${string}`;
+			const context = {poolId: 'seam-pool-id', storeAddress, chainId: 8453n};
+			const hash = cardMessageHash(context, nullifier, batchId);
 			expect(hash).toMatchRegex(/^0x[0-9a-f]{64}$/);
-			expect(hash).toEqual('0x43c87d2c1e8de0c149a78a0505da65ae3a9ffcb72b17d6d4433b5ba0fcb2c785');
+			expect(hash).toEqual('0xa01a0fb692be39ccb75d3f44b6e7cb45558cbda2717631ab6e0dafbc77d166d7');
 		});
 	});
 
 	describe('ethSignedMessageHash', function () {
 		it('wraps the raw digest with the EIP-191 personal-sign prefix', function () {
-			const messageHash = cardMessageHash('nullifier-x', '0x' + 'cc'.repeat(20));
+			const context = {
+				poolId: 'pool-eth',
+				storeAddress: '0x' + 'cc'.repeat(20),
+				chainId: 31337n,
+			};
+			const messageHash = cardMessageHash(context, 'nullifier-x', '0x' + 'cc'.repeat(20));
 			const ethSigned = ethSignedMessageHash(messageHash);
 			// Deterministic 32-byte hex digest.
 			expect(ethSigned).toMatchRegex(/^0x[0-9a-f]{64}$/);
@@ -92,11 +126,16 @@ describe('shared card encoding seam (encoding)', function () {
 			const batchWallet = createBatchWallet();
 			const batchId = batchWallet.address;
 			const nullifier = 'roundtrip-nullifier';
+			const context = {
+				poolId: 'pool-rt',
+				storeAddress: '0x' + 'dd'.repeat(20),
+				chainId: 31337n,
+			};
 
-			const signature = await signCardMessage(batchWallet, nullifier, batchId);
+			const signature = await signCardMessage(batchWallet, context, nullifier, batchId);
 
 			const recovered = await recoverMessageAddress({
-				message: {raw: cardMessageHash(nullifier, batchId)},
+				message: {raw: cardMessageHash(context, nullifier, batchId)},
 				signature,
 			});
 			expect(recovered.toLowerCase()).toEqual(batchId.toLowerCase());
@@ -118,7 +157,14 @@ describe('shared card encoding seam (encoding)', function () {
 				account: safe,
 			});
 
-			const signature = await signCardMessage(batchWallet, nullifier, batchId);
+			// The context MUST mirror the on-chain digest: address(this) is the
+			// deployed store address and block.chainid is the local chain id.
+			const context = {
+				poolId,
+				storeAddress: S3ntimentSurveyStore.address,
+				chainId: CHAIN_ID,
+			};
+			const signature = await signCardMessage(batchWallet, context, nullifier, batchId);
 
 			// The shared-encoding signature is accepted on-chain: the recovered
 			// signer (batchId) matches what registerInPool requires, proving the
@@ -135,6 +181,12 @@ describe('shared card encoding seam (encoding)', function () {
 				await env.read(S3ntimentSurveyStore, {
 					functionName: 'isPoolMember',
 					args: [poolId, poolWallet],
+				}),
+			).toEqual(true);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolId, nullifier, batchId],
 				}),
 			).toEqual(true);
 		});
@@ -155,8 +207,13 @@ describe('shared card encoding seam (encoding)', function () {
 				account: safe,
 			});
 
-			// Wrong key over the same (nullifier, batchId) — on-chain must reject.
-			const badSignature = await signCardMessage(wrongSigner, 'seam-card', batchId);
+			const context = {
+				poolId,
+				storeAddress: S3ntimentSurveyStore.address,
+				chainId: CHAIN_ID,
+			};
+			// Wrong key over the same (pool, nullifier, batchId) — on-chain must reject.
+			const badSignature = await signCardMessage(wrongSigner, context, 'seam-card', batchId);
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await expect(
 				mockSmc.write.register([

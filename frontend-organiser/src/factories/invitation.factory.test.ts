@@ -49,6 +49,12 @@ const batchOwner = privateKeyToAccount(BATCH_PK);
 // Mirrors vitest.config.ts `define`: import.meta.env.VITE_FRONTEND_DEV.
 const BASEURL = 'https://organiser.local/';
 
+// card-v2 context the producer signs cards with (pool/contract/chain bound).
+// Must mirror the on-chain digest (address(this), block.chainid); the tests use
+// an arbitrary store address + base chain id.
+const STORE_ADDRESS = `0x${'11'.repeat(20)}`;
+const CHAIN_ID = 8453n;
+
 // Mirrors generateRandomNullifier(): 16 random bytes -> base64url, no padding.
 function generatedNullifier(): string {
   const bytes = new Uint8Array(16);
@@ -137,13 +143,13 @@ describe('invitation.factory — generateCardSecrets', () => {
 
   it('returns exactly batch.amount cards', async () => {
     const batch = makeBatch({ amount: 5 });
-    const cards = await generateCardSecrets(batchOwner, batch);
+    const cards = await generateCardSecrets(batchOwner, batch, STORE_ADDRESS, CHAIN_ID);
     expect(cards).toHaveLength(5);
   });
 
   it('generates unique base64url nullifiers (22 chars for 16 bytes)', async () => {
     const batch = makeBatch({ amount: 8 });
-    const cards = await generateCardSecrets(batchOwner, batch);
+    const cards = await generateCardSecrets(batchOwner, batch, STORE_ADDRESS, CHAIN_ID);
     const nullifiers = cards.map((c) => c.nullifier);
     expect(new Set(nullifiers).size).toBe(8); // all unique
     for (const n of nullifiers) {
@@ -153,7 +159,7 @@ describe('invitation.factory — generateCardSecrets', () => {
 
   it('builds each card URL in the frozen producer shape', async () => {
     const batch = makeBatch({ amount: 3, survey: 'survey-abc' });
-    const cards = await generateCardSecrets(batchOwner, batch);
+    const cards = await generateCardSecrets(batchOwner, batch, STORE_ADDRESS, CHAIN_ID);
     for (const card of cards) {
       const expected =
         `${BASEURL}?n=${card.nullifier}&b=${batch.id}&sig=${card.signature}&s=${batch.survey}`;
@@ -163,7 +169,7 @@ describe('invitation.factory — generateCardSecrets', () => {
 
   it('generates an SVG string for every card via QRCode.toString(url)', async () => {
     const batch = makeBatch({ amount: 4 });
-    const cards = await generateCardSecrets(batchOwner, batch);
+    const cards = await generateCardSecrets(batchOwner, batch, STORE_ADDRESS, CHAIN_ID);
     expect(mocks.qrToString).toHaveBeenCalledTimes(4);
     for (const card of cards) {
       expect(card.svgString).toBe('<svg/>');
@@ -173,26 +179,30 @@ describe('invitation.factory — generateCardSecrets', () => {
 
   it('CROWN JEWEL: every produced card URL round-trips through shared parseCardURL to surveyOwner === batch.id', async () => {
     const batch = makeBatch({ amount: 5 });
-    const cards = await generateCardSecrets(batchOwner, batch);
+    const cards = await generateCardSecrets(batchOwner, batch, STORE_ADDRESS, CHAIN_ID);
 
     for (const card of cards) {
       // Real shared consumer (relative-source-path import), real shared
       // signCardMessage (via @s3ntiment/shared mock re-export) — no stubs in the
       // signature/URL path. This pins the producer half of the handshake to the
       // exact bytes the respondents + on-chain registerInPool validate.
-      const parsed = await parseCardURL(card.url);
+      // The card message is bound to the pool/contract/chain it was printed for,
+      // so parseCardURL must be given the same context to recover the owner.
+      const context = { poolId: batch.pool!, storeAddress: STORE_ADDRESS, chainId: CHAIN_ID };
+      const parsed = await parseCardURL(card.url, context);
       expect(parsed).not.toBeNull();
       const data = parsed as CardData;
       expect(data.surveyOwner).toBe(batch.id);
       expect(data.nullifier).toBe(card.nullifier);
       expect(data.batchId).toBe(batch.id);
       expect(data.surveyId).toBe(batch.survey);
+      expect(data.poolId).toBe(batch.pool);
     }
   });
 
   it('recovered nullifiers have no URL-special characters (base64url, padding stripped)', async () => {
     const batch = makeBatch({ amount: 1 });
-    const [card] = await generateCardSecrets(batchOwner, batch);
+    const [card] = await generateCardSecrets(batchOwner, batch, STORE_ADDRESS, CHAIN_ID);
     expect(card.nullifier).not.toMatch(/[+/=]/);
     // Deterministic example of the transform used by the producer.
     const ref = generatedNullifier();
@@ -243,7 +253,7 @@ describe('invitation.factory — createZipFile', () => {
   });
 
   it('calls saveAs with s3ntiment-qr-codes-<surveyId>.zip and a Blob', async () => {
-    const cards = await generateCardSecrets(batchOwner, makeBatch({ amount: 2 }));
+    const cards = await generateCardSecrets(batchOwner, makeBatch({ amount: 2 }), STORE_ADDRESS, CHAIN_ID);
     await createZipFile(cards, 'survey-123');
     expect(mocks.saveAs).toHaveBeenCalledTimes(1);
     const [blob, name] = mocks.saveAs.mock.calls[0];

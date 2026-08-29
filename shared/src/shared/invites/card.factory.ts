@@ -2,9 +2,18 @@ import { recoverMessageAddress } from "viem";
 
 import { CardData } from "@s3ntiment/shared";
 import { cardMessageHash } from "./encoding.js";
+import type { CardMessageContext } from "./encoding.js";
 
 
-export const parseCardURL = async (href: string): Promise<CardData | null> => {
+// The card message is now bound to pool/contract/chain (card-v2). To recover
+// the signer over the exact digest the card was signed with, parseCardURL must
+// be given the same CardMessageContext (poolId, storeAddress, chainId) the
+// organiser used when printing the card. Without it the digest cannot be
+// reconstructed, so owner recovery is skipped and `surveyOwner` is left unset.
+export const parseCardURL = async (
+    href: string,
+    context?: CardMessageContext,
+): Promise<CardData | null> => {
 
     try {
         const params = new URL(href).searchParams;
@@ -25,23 +34,29 @@ export const parseCardURL = async (href: string): Promise<CardData | null> => {
         const decodedSignature  = decodeURIComponent(signature) as `0x${string}`;
         const decodedSurveyId   = decodeURIComponent(surveyId);
 
-        const messageHash = cardMessageHash(decodedNullifier, decodedBatchId);
+        let surveyOwner: string | undefined;
 
-        console.log("encoded combo", messageHash)
+        if (context) {
+            // Same digest the organiser signed and registerInPool verifies.
+            const messageHash = cardMessageHash(context, decodedNullifier, decodedBatchId);
 
-        const surveyOwner = await recoverMessageAddress({
-            message: { raw: messageHash },
-            signature: decodedSignature,
-        });
+            console.log("encoded combo", messageHash)
 
-        console.log("SURVEY OWNER", surveyOwner)
+            surveyOwner = await recoverMessageAddress({
+                message: { raw: messageHash },
+                signature: decodedSignature,
+            });
+
+            console.log("SURVEY OWNER", surveyOwner)
+        }
 
         return {
             nullifier:   decodedNullifier,
             batchId:     decodedBatchId,
             signature:   decodedSignature,
-            surveyOwner,            
+            surveyOwner,
             surveyId:    decodedSurveyId,
+            poolId:      context?.poolId,
         };
 
     } catch (error) {
@@ -58,13 +73,22 @@ export class Card {
         this.data = data;
     }
 
-    async isUsed(services: any, surveyStore: any): Promise<boolean> {
+    // isNullifierUsed is scoped per pool (card-v2): the read needs the poolId the
+    // card belongs to. Prefer an explicit poolId; falls back to the poolId carried
+    // on CardData (populated by parseCardURL from the given context) when present.
+    async isUsed(services: any, surveyStore: any, poolId?: string): Promise<boolean> {
+
+        const scopedPoolId = poolId ?? this.data.poolId;
+
+        if (!scopedPoolId) {
+            throw new Error('Cannot check card usage without a poolId');
+        }
 
         return await services.viem.read(
             surveyStore.address as `0x${string}`,
             surveyStore.abi,
             "isNullifierUsed",
-            [this.data.nullifier, this.data.batchId]
+            [scopedPoolId, this.data.nullifier, this.data.batchId]
         );
     }
 

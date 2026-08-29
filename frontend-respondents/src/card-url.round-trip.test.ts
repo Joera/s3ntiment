@@ -20,6 +20,11 @@ const BATCH_PK =
 const batchOwner = privateKeyToAccount(BATCH_PK);
 
 const SURVEY_ID = 'survey-roundtrip';
+// card-v2: the card message is bound to pool/contract/chain; the context used to
+// sign must be the same context passed to parseCardURL to recover the owner.
+const STORE_ADDRESS = `0x${'11'.repeat(20)}`;
+const CHAIN_ID = 8453n;
+const CONTEXT = { poolId: 'pool-roundtrip', storeAddress: STORE_ADDRESS, chainId: CHAIN_ID };
 // BASEURL stands in for the app base URL the organiser resolves at build time
 // (import.meta.env.VITE_FRONTEND_DEV / _PROD). The path/host are irrelevant to
 // parseCardURL — it only reads the query string.
@@ -40,12 +45,12 @@ function generateGeneratedNullifier(): string {
 describe('organiser producer -> shared parseCardURL round-trip', () => {
   it('recovers surveyOwner === batchId for a card generated exactly like the organiser does', async () => {
     const nullifier = generateGeneratedNullifier();
-    const signature = await signCardMessage(batchOwner, nullifier, batchOwner.address);
+    const signature = await signCardMessage(batchOwner, CONTEXT, nullifier, batchOwner.address);
 
     // Identical assembly to invitation.factory.ts generateCardSecrets.
     const url = `${BASEURL}?n=${nullifier}&b=${batchOwner.address}&sig=${signature}&s=${SURVEY_ID}`;
 
-    const data = await parseCardURL(url);
+    const data = await parseCardURL(url, CONTEXT);
 
     expect(data).not.toBeNull();
     const card = data as CardData;
@@ -59,13 +64,13 @@ describe('organiser producer -> shared parseCardURL round-trip', () => {
 
   it('round-trips even with an encodeURIComponent-escaped nullifier in the query', async () => {
     const nullifier = generateGeneratedNullifier();
-    const signature = await signCardMessage(batchOwner, nullifier, batchOwner.address);
+    const signature = await signCardMessage(batchOwner, CONTEXT, nullifier, batchOwner.address);
 
     const url =
       `${BASEURL}?n=${encodeURIComponent(nullifier)}` +
       `&b=${batchOwner.address}&sig=${signature}&s=${SURVEY_ID}`;
 
-    const data = await parseCardURL(url);
+    const data = await parseCardURL(url, CONTEXT);
 
     expect(data).not.toBeNull();
     const card = data as CardData;
@@ -77,9 +82,9 @@ describe('organiser producer -> shared parseCardURL round-trip', () => {
     const cards = await Promise.all(
       Array.from({ length: 5 }, async () => {
         const nullifier = generateGeneratedNullifier();
-        const signature = await signCardMessage(batchOwner, nullifier, batchOwner.address);
+        const signature = await signCardMessage(batchOwner, CONTEXT, nullifier, batchOwner.address);
         const url = `${BASEURL}?n=${nullifier}&b=${batchOwner.address}&sig=${signature}&s=${SURVEY_ID}`;
-        return parseCardURL(url);
+        return parseCardURL(url, CONTEXT);
       }),
     );
 

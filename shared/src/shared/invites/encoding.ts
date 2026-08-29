@@ -4,45 +4,73 @@
 // computed and signed, so the contract tests AND both frontends import the
 // SAME bytes. See the seam-coverage audit:
 //   brain/audits/seam-coverage-exploration-2026-08-28.md
-// (four independent implementations of the card message hash previously
-// lived in S3ntimentSurveyStore.sol, the contract test, invitation.factory
-// and card.factory — this module is the seam that unifies them).
 //
 // This module MUST stay LEAF-LEVEL: it imports only `viem` and must not pull
 // in Lit / Nillion / d3 (or any other heavy dep), so it can be imported both
 // by the Hardhat node-test-runner (contracts) and by the Vite frontends.
 //
-// The on-chain oracle (S3ntimentSurveyStore.sol, registerInPool) is:
-//   messageHash = keccak256(abi.encodePacked(nullifier, "|", batchId))
+// CARD-V2 (breaking) digest — the card message is now bound to pool, contract
+// and chain, scoping each card to one pool on one contract on one chain:
+//   messageHash = keccak256(abi.encode(poolId, nullifier, batchId,
+//                                     contractAddress, chainId))
 //   ethSignedHash = keccak256("\x19Ethereum Signed Message:\n32" + messageHash)
-//   signer = ecrecover(ethSignedHash, signature)  — must equal batchId
+//   signer = ecrecover(ethSignedHash, signature) — must equal batchId
 // signCardMessage below produces exactly that ethSignedHash signature.
+//
+// The on-chain oracle (S3ntimentSurveyStore.sol, registerInPool) computes the
+// identical digest with (poolId, nullifier, batchId, address(this),
+// block.chainid). abi.encode (NOT encodePacked) is mandatory: poolId and
+// nullifier are both dynamic strings, so packed concatenation would not be
+// collision-safe. The equivalent viem encoding is `abi.encode` ==
+// encodeAbiParameters(['string','string','address','address','uint256'], [...]),
+// which reproduces Solidity's field offsets + dynamic-length prefixes exactly.
 
 import {
 	concat,
-	encodePacked,
+	encodeAbiParameters,
 	keccak256,
+	parseAbiParameters,
 	stringToBytes,
 	toBytes,
 } from 'viem';
 import type {LocalAccount} from 'viem/accounts';
 
 /**
- * The raw card message hash: keccak256(abi.encodePacked(nullifier, "|", batchId)).
+ * The static per-deployment binding of a card to pool, contract and chain.
+ * `storeAddress` must be the address of S3ntimentSurveyStore on which the card
+ * will be redeemed; `chainId` must be that deployment's chain id (the contract
+ * uses address(this) and block.chainid). `poolId` scopes the card to a pool.
+ */
+export interface CardMessageContext {
+	poolId: string;
+	storeAddress: string;
+	chainId: bigint;
+}
+
+/**
+ * The raw card message hash:
+ *   keccak256(abi.encode(poolId, nullifier, batchId, storeAddress, chainId))
  *
- * NOTE — legacy byte-concat form: this must stay byte-identical to the old
- * hand-rolled `encodeNullifierBatchCombo` in card.factory.ts (UTF-8 nullifier
- * ++ "|" ++ raw 20-byte batchId). That equivalence is pinned by
+ * This is byte-identical to the on-chain digest built by
+ * S3ntimentSurveyStore.registerInPool with address(this) == storeAddress and
+ * block.chainid == chainId. The equivalence is pinned by
  * contracts/test/encoding.seam.test.ts.
  */
 export function cardMessageHash(
+	context: CardMessageContext,
 	nullifier: string,
 	batchId: string,
 ): `0x${string}` {
 	return keccak256(
-		encodePacked(
-			['string', 'string', 'address'] as const,
-			[nullifier, '|', batchId as `0x${string}`],
+		encodeAbiParameters(
+		parseAbiParameters('string,string,address,address,uint256'),
+		[
+			context.poolId,
+			nullifier,
+			batchId as `0x${string}`,
+			context.storeAddress as `0x${string}`,
+			context.chainId,
+		],
 		),
 	);
 }
@@ -69,10 +97,11 @@ export function ethSignedMessageHash(messageHash: `0x${string}`): `0x${string}` 
  */
 export async function signCardMessage(
 	account: LocalAccount<string>,
+	context: CardMessageContext,
 	nullifier: string,
 	batchId: string,
 ): Promise<`0x${string}`> {
-	const messageHash = cardMessageHash(nullifier, batchId);
+	const messageHash = cardMessageHash(context, nullifier, batchId);
 	const ethSignedHash = ethSignedMessageHash(messageHash);
 	// `sign` is typed optional on LocalAccount but is always present on the
 	// viem accounts passed here (privateKeyToAccount / createBatchWallet).

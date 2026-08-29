@@ -37,7 +37,22 @@ export async function resolveRootGate(
   }
 
   const card = new Card(cardData);
-  const isUsed = await card.isUsed(services, surveyStore);
+
+  // card-v2: isNullifierUsed is scoped per pool, so the usage check needs the
+  // poolId. The card URL only carries the surveyId (not the pool), so resolve
+  // the pool via the survey before checking — the pool is otherwise unknown at
+  // the root gate. If it can't be resolved, proceed conservatively (usage is
+  // re-checked later in the flow).
+  let poolId: string | undefined;
+  if (cardData.surveyId) {
+    const [, resolvedPool] = await fetchSurvey(services, surveyStore, cardData.surveyId);
+    poolId = resolvedPool;
+  }
+  if (!poolId) {
+    return { proceed: true };
+  }
+
+  const isUsed = await card.isUsed(services, surveyStore, poolId);
 
   if (isUsed) {
     return { navigate: `/used-card/${card.surveyId}` };

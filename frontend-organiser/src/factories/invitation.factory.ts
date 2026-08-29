@@ -57,14 +57,23 @@ export const createBatchWallet = async (services: any) => {
 export const generateCardSecrets = async (
   batchAccount: any,
   batch: Batch,
+  storeAddress: string,
+  chainId: bigint,
 ) : Promise<CardData[]> => {
+  // card-v2: the card message is bound to the pool/contract/chain it will be
+  // redeemed on. storeAddress is the S3ntimentSurveyStore deployment and
+  // chainId its chain id — the on-chain oracle recomputes the identical digest
+  // from (poolId, nullifier, batchId, address(this), block.chainid). The batch
+  // is scoped to one pool, so poolId = batch.pool.
+  const poolId = batch.pool!;
   const cards = await Promise.all(
     Array.from({ length: batch.amount }, async () => {
       const nullifier = generateRandomNullifier();
       
-      // EIP-191 signature over the shared card message hash. Recoverable to
-      // batch.id via viem recoverMessageAddress, and satisfies registerInPool.
-      const signature = await signCardMessage(batchAccount, nullifier, batch.id);
+      // EIP-191 signature over the shared, pool/contract/chain-bound card message
+      // hash. Recoverable to batch.id via viem recoverMessageAddress, and
+      // satisfies registerInPool.
+      const signature = await signCardMessage(batchAccount, { poolId, storeAddress, chainId }, nullifier, batch.id);
       
       const url = `${BASEURL}?n=${nullifier}&b=${batch.id}&sig=${signature}&s=${batch.survey}`;
       return { nullifier, signature, url, svgString: await generateQRCodeSVG(url) };

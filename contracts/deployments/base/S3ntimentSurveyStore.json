@@ -23,6 +23,11 @@
     },
     {
       "inputs": [],
+      "name": "InvalidMemberAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "InvalidSignature",
       "type": "error"
     },
@@ -227,6 +232,11 @@
       "inputs": [
         {
           "internalType": "string",
+          "name": "poolId",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
           "name": "nullifier",
           "type": "string"
         },
@@ -364,6 +374,24 @@
       "inputs": [
         {
           "internalType": "string",
+          "name": "poolId",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "member",
+          "type": "address"
+        }
+      ],
+      "name": "revokeMember",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
           "name": "surveyId",
           "type": "string"
         }
@@ -396,25 +424,6 @@
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "bytes32",
-          "name": "",
-          "type": "bytes32"
-        }
-      ],
-      "name": "usedNullifiers",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "",
-          "type": "bool"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
     }
   ],
   "contractName": "S3ntimentSurveyStore",
@@ -431,7 +440,7 @@
       "createSurvey(string,string,string,address[])": {
         "details": "Create a survey. If the pool does not exist yet, it is created      implicitly and msg.sender is recorded as the pool's Safe.      Always Safe-executed (msg.sender = Safe address).      New pool (poolId not yet registered):        - Pool is bootstrapped with msg.sender as the owning Safe        - batchIds are registered for the new pool      Existing pool:        - msg.sender must be the pool's Safe        - batchIds are ignored (use registerBatch() for new print runs)",
         "params": {
-          "batchIds": "Batch wallet addresses — only used when bootstrapping a new pool",
+          "batchIds": "Batch wallet addresses \u2014 only used when bootstrapping a new pool",
           "ipfsCid": "IPFS content identifier for survey metadata",
           "poolId": "Pool this survey belongs to (created if new)",
           "surveyId": "Unique identifier, generated client-side"
@@ -448,7 +457,7 @@
         }
       },
       "registerInPool(string,string,address,bytes)": {
-        "details": "Validate a card and register the pool wallet EOA as a pool member.      Called by the respondent's SMC (gas abstraction layer).      Identity resolved via ISMC(msg.sender).owner() → pool wallet EOA.",
+        "details": "Validate a card and register the pool wallet EOA as a pool member.      Called by the respondent's SMC (gas abstraction layer).      Identity resolved via ISMC(msg.sender).owner() \u2192 pool wallet EOA.",
         "params": {
           "batchId": "Batch wallet address this card belongs to",
           "nullifier": "Unique card identifier from QR code",
