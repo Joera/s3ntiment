@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// auth.factory.ts imports `fetchSurvey` from the shared package root source.
-// The functions under test (authenticate / hasParticipatingAccount) never
-// call it, so we stub the whole shared source index to keep this a pure,
-// node-env unit test (no Lit/Nillion/d3/browser globals dragged in).
+// humanWallet.factory.ts imports `fetchSurvey` from the shared package root source.
+// The functions under test (authenticate / hasParticipatingAccount) never call it,
+// so we stub the whole shared source index to keep this a pure, node-env unit test
+// (no Lit/Nillion/d3/browser globals dragged in). This is the extracted human-wallet
+// flow (Task 1a) retained for the LATER post-survey persist route — it is NOT called
+// at the survey entry gate anymore.
 vi.mock('../../shared/src/shared', () => ({
   fetchSurvey: vi.fn(),
 }));
 
-import { authenticate, hasParticipatingAccount } from './auth.factory.js';
+import { authenticate, hasParticipatingAccount } from './humanWallet.factory.js';
 import type { IServices } from './services.js';
 // Committed deployment JSON — resolved via the s3ntiment-contracts workspace
 // exports map (./deployments/*) so tests read the real address/abi.

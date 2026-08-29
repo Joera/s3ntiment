@@ -8,12 +8,12 @@
 //
 // The extraction preserves the exact observable router behavior (root: card
 // unparseable -> invalid-card; used -> used-card/:surveyId; else proceed;
-// /surveys: fetchSurvey -> participation/authenticate -> proceed | invalid-card),
-// while making the gate logic independently testable.
+// /surveys: fetchSurvey -> ensure bootstrap leaf E -> proceed), while making the
+// gate logic independently testable.
 
 import { Card, type CardData } from '../../shared/src/shared/invites/card.factory.js';
 import { fetchSurvey } from '@s3ntiment/shared/browser';
-import { authenticate, hasParticipatingAccount } from './auth.factory.js';
+import { ensureBootstrapKey } from './bootstrap.factory.js';
 import { store } from './state/store.js';
 
 export type RootGateResult =
@@ -61,8 +61,11 @@ export async function resolveRootGate(
 }
 
 // `/surveys/:surveyId` entry gate. Resolves the surveyId (navigating to
-// '/surveys' when absent), fetches the survey and populates the store, then
-// grants entry only to participating accounts (authenticating on demand).
+// '/surveys' when absent), fetches the survey and populates the store, then pushes
+// deferred identity: at entry the random bootstrap leaf `E` is PRE-registration, so
+// the gate becomes "ensure E exists + persisted" (RFC §5.2 / §8), not an on-chain
+// `isPoolMember` membership check. Membership is established later via
+// card.register / the submit flow.
 export async function resolveSurveyGate(
   services: any,
   surveyStore: any,
@@ -80,13 +83,8 @@ export async function resolveSurveyGate(
   });
   store.setActiveSurvey(surveyId);
 
-  let isParticipant = await hasParticipatingAccount(services, poolId);
-  if (!isParticipant) {
-    isParticipant = await authenticate(services, poolId);
-  }
+  // Random bootstrap stealth leaf: load-or-create + persist, set on the signer.
+  await ensureBootstrapKey(services);
 
-  if (isParticipant) {
-    return { proceed: true };
-  }
-  return { navigate: '/invalid-card' };
+  return { proceed: true };
 }

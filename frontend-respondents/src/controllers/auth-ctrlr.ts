@@ -5,7 +5,7 @@ import { store } from '../state/store.js';
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
 
 import { router } from '../router.js';
-import { authenticate } from '../auth.factory.js';
+import { ensureBootstrapKey } from '../bootstrap.factory.js';
 import { CardData, fetchSurvey } from '@s3ntiment/shared';
 import { Card, parseCardURL } from '@s3ntiment/shared';
 import { removeSplash } from '../onpageload.js';
@@ -67,37 +67,27 @@ export class AuthController {
                 pool: poolId
             })
 
-            const isParticipant = await authenticate(this.services, poolId);
+            // Deferred identity: at entry the random bootstrap leaf `E` is
+            // pre-registration, so establish E (load-or-create + persist) on the
+            // signer rather than running the human-wallet WaaP/OPRF authenticate().
+            await ensureBootstrapKey(this.services);
 
-            console.log(`${this.services.account.getAddress()} : ${poolId} - ${isParticipant}`)
+            try {
+                const tx = await card.register(this.services, surveyStore, poolId);
 
-            // if(isParticipant ) {  // && import.meta.env.VITE_PROD == 'true'
-            //  //   alert("your mailadress was already used for this survey. Skip if you're just tesing")
-            // }
+                console.log(tx)
+            
+                if (tx.receipt?.status === 'success') {
+                    console.log("new card registered")
+                    router.navigate('/surveys/' + cardData.surveyId);
 
-            if(!isParticipant) {
-
-                try {
-                    const tx = await card.register(this.services, surveyStore, poolId);
-
-                    console.log(tx)
-                
-                    if (tx.receipt?.status === 'success') {
-                        console.log("new card registered")
-                        router.navigate('/surveys/' + cardData.surveyId);
-
-                    } else {
-                        alert('❌ Card validation failed');
-                    }
-                } catch (error) {
-
+                } else {
                     alert('❌ Card validation failed');
                 }
-            } 
+            } catch (error) {
 
-            if(isParticipant) {
-                router.navigate(`/surveys/${cardData.surveyId}`);
-            } 
+                alert('❌ Card validation failed');
+            }
         }   
 
     }
