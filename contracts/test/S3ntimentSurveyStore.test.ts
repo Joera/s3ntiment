@@ -909,4 +909,156 @@ describe('S3ntimentSurveyStore', function () {
 			);
 		});
 	});
+
+	describe('revokeMember (Safe-gated governance)', function () {
+		// Register a member via a valid card so revokeMember has a real member to
+		// remove. Mirrors the membership setup used in the registerInPool tests.
+		async function registerMember({env, S3ntimentSurveyStore, poolId, member, safe}) {
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			// Unique surveyId per call so the same member can join multiple pools.
+			const surveyId = 'revoke-srv-' + poolId;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: [surveyId, poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+			const signature = await signCardMessage(batchWallet, 'card-revoke-' + poolId, batchAddress);
+			const mockSmc = await viem.deployContract('MockSMC', [member]);
+			await mockSmc.write.register([
+				S3ntimentSurveyStore.address,
+				poolId,
+				'card-revoke-' + poolId,
+				batchAddress,
+				signature,
+			]);
+		}
+
+		it('lets the pool Safe revoke a registered member (isPoolMember -> false)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const member = unnamedAccounts[3];
+			const poolId = 'pool-revoke';
+			await registerMember({env, S3ntimentSurveyStore, poolId, member, safe});
+
+			// Member is registered before the revoke.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, member],
+				}),
+			).toEqual(true);
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, member],
+				account: safe,
+			});
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, member],
+				}),
+			).toEqual(false);
+		});
+
+		it('reverts revokeMember when called by a non-safe (NotPoolSafe)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const nonSafe = unnamedAccounts[1];
+			const member = unnamedAccounts[3];
+			const poolId = 'pool-revoke-auth';
+			await registerMember({env, S3ntimentSurveyStore, poolId, member, safe});
+
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'revokeMember',
+					args: [poolId, member],
+					account: nonSafe,
+				}),
+			).toBeRejectedWith(`custom error 'NotPoolSafe()'`);
+		});
+
+		it('reverts revokeMember for an unknown pool (PoolNotFound)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'revokeMember',
+					args: ['ghost-pool', unnamedAccounts[3]],
+					account: unnamedAccounts[0],
+				}),
+			).toBeRejectedWith(`custom error 'PoolNotFound()'`);
+		});
+
+		it('idempotently no-ops revoking an already-unregistered member', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const member = unnamedAccounts[3];
+			const poolId = 'pool-revoke-idempotent';
+			await registerMember({env, S3ntimentSurveyStore, poolId, member, safe});
+
+			// First revoke removes the member.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, member],
+				account: safe,
+			});
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, member],
+				}),
+			).toEqual(false);
+
+			// Revoking the same member again (already unregistered) is a safe no-op.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, member],
+				account: safe,
+			});
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, member],
+				}),
+			).toEqual(false);
+		});
+
+		it('does not revoke the member in another pool (membership stays scoped)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const member = unnamedAccounts[3];
+			const poolA = 'pool-revoke-scope-a';
+			const poolB = 'pool-revoke-scope-b';
+			// Same member joins both pools (two separate cards).
+			await registerMember({env, S3ntimentSurveyStore, poolId: poolA, member, safe});
+			await registerMember({env, S3ntimentSurveyStore, poolId: poolB, member, safe});
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolA, member],
+				account: safe,
+			});
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolA, member],
+				}),
+			).toEqual(false);
+			// Membership in the other pool is untouched.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolB, member],
+				}),
+			).toEqual(true);
+		});
+	});
 });
