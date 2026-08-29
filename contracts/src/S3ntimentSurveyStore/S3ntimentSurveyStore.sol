@@ -15,8 +15,9 @@ pragma solidity ^0.8.0;
  *   - The per-pool authority is pools[poolId].safe — the Safe multisig that owns it
  *   - A pool is created implicitly when the first survey references it
  *   - The _requirePoolSafe(poolId) internal function is the SINGLE choke-point for
- *     every Safe-gated write (createSurvey on an existing pool, updateSurvey, registerBatch)
- *   - registerBatch() is Safe-executed (governance)
+ *     every Safe-gated write (createSurvey on an existing pool, updateSurvey, registerBatch,
+ *     revokeMember)
+ *   - registerBatch() and revokeMember() are Safe-executed (governance)
  *
  * Card generation flow (off-chain):
  *   1. Pool Safe signs a random seed → derives an ephemeral batch wallet
@@ -333,6 +334,24 @@ contract S3ntimentSurveyStore {
         address poolWallet = ISMC(msg.sender).owner();
         if (poolMembers[poolId][poolWallet]) revert AlreadyPoolMember();
         poolMembers[poolId][poolWallet] = true;
+    }
+
+    /**
+     * @dev Revoke a member from a pool (governance). Safe-gated: msg.sender must
+     *      be the pool's Safe. Approval runs through the shared _requirePoolSafe
+     *      choke-point, so no privileged path can bypass auth.
+     *
+     *      Setting poolMembers[poolId][member] to false is idempotent: revoking an
+     *      already-removed (or never-registered) member is a no-op that succeeds,
+     *      consistent with registerBatch-style governance writes (no revert on a
+     *      missing entry).
+     *
+     * @param poolId  Pool the member belongs to
+     * @param member  Pool-wallet EOA to revoke from the pool
+     */
+    function revokeMember(string memory poolId, address member) external {
+        _requirePoolSafe(poolId);
+        poolMembers[poolId][member] = false;
     }
 
     /**
