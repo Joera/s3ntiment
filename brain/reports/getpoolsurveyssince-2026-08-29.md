@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-29
 **Branch:** `deepseek/getpoolsurveyssince`
-**Commit:** __FILL_AFTER_PUSH__ (code commit; a docs-only follow-up commit pins this sha + PR URL)
-**PR:** __FILL_AFTER_PR__
+**Commit:** `844e16308` (code commit; a docs-only follow-up commit pins this sha + PR URL)
+**PR:** https://github.com/Joera/s3ntiment/pull/22
 **Status:** IMPLEMENTED — additive view fn + tests, all green gates. PR open against `main`; NOT merged.
 **Contract of record:** `brain/handoffs/survey-poll-view-function-2026-08-29.md` (handoff), grounded by
 `brain/audits/survey-poll-api-exploration-2026-08-29.md` and
