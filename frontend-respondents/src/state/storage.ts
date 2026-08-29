@@ -6,6 +6,33 @@ import { SurveyMap } from "./surveys.store";
 const SURVEYS_STORAGE_KEY = 'surveys';
 const POOLS_STORAGE_KEY = 'pools';
 
+// Bootstrap stealth-leaf private key (RFC-deferred-identity-persistence).
+// The random bootstrap leaf `E` is written to device-local storage IMMEDIATELY at
+// generation (RFC §7.1) so it survives a tab close — otherwise the burned nullifier
+// is orphaned. This is the transient bootstrap credential, NOT a durable anchor.
+export const BOOTSTRAP_STORAGE_KEY = 'bootstrapE';
+
+export function loadBootstrapKeyFromStorage(): `0x${string}` | null {
+  try {
+    const stored = localStorage.getItem(BOOTSTRAP_STORAGE_KEY);
+    // Persisted as raw 0x-prefixed 32-byte (64 hex char) private key.
+    if (stored && /^0x[0-9a-fA-F]{64}$/.test(stored)) {
+      return stored as `0x${string}`;
+    }
+  } catch (e) {
+    console.warn('Failed to load bootstrap key from localStorage:', e);
+  }
+  return null;
+}
+
+export function saveBootstrapKeyToStorage(key: `0x${string}`): void {
+  try {
+    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, key);
+  } catch (e) {
+    console.warn('Failed to save bootstrap key to localStorage:', e);
+  }
+}
+
 export interface PoolsMap {
   [id: string]: Pool;
 }

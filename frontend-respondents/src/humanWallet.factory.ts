@@ -3,6 +3,17 @@ import { IServices } from "./services"
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
 import { fetchSurvey } from "../../shared/src/shared";
 
+// Human-wallet identity flow — EXTRACTED (Task 1a of RFC-deferred-identity-persistence).
+//
+// This is the full "human wallet" flow: WaaP login -> signMessage -> OPRF blind-sign
+// derive -> swap the smart-account signer via updateSignerWithKey. It is the durable,
+// anchor-stealth pairing for the LATER post-survey persist route — NOT called at the
+// survey entry gate. Entry now bootstraps a random stealth leaf instead
+// (see bootstrap.factory.ts ensureBootstrapKey).
+//
+// The persist flow (later task) re-establishes a durable anchor identity from this
+// factory and rotates records E -> S. It is deliberately NOT invoked at entry.
+
 export const authenticate = async (services: IServices, poolId: string) : Promise<boolean>=> {
          
     await services.waap.login(base);

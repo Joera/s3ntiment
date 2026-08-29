@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---- The gate helpers are imported AFTER these mocks are hoisted, so the
-// helper module resolves against the mocked Card / fetchSurvey / auth fns.
+// helper module resolves against the mocked Card / fetchSurvey / bootstrap fns.
 // `Card` is mocked so we control `isUsed` per test (mirrors auth-ctrlr.test's
 // instance-capturing mock); `store` is the REAL store (like survey-ctrlr.test
-// uses) so we can assert the gate populates survey data.
+// uses) so we can assert the gate populates survey data. The survey gate no
+// longer authenticates — it ensures the random bootstrap leaf `E` (deferred
+// identity, Task 1) via the mocked ensureBootstrapKey.
 
 const h = vi.hoisted(() => ({
   isUsedImpl: {
@@ -35,9 +37,8 @@ vi.mock('@s3ntiment/shared/browser', () => ({
   fetchSurvey: vi.fn((...args: any[]) => h.fetchImpl.current(...args)),
 }));
 
-vi.mock('./auth.factory.js', () => ({
-  hasParticipatingAccount: vi.fn(),
-  authenticate: vi.fn(),
+vi.mock('./bootstrap.factory.js', () => ({
+  ensureBootstrapKey: vi.fn(),
 }));
 
 import {
@@ -45,7 +46,7 @@ import {
   resolveSurveyGate,
 } from './router.gates.js';
 import { Card } from '../../shared/src/shared/invites/card.factory.js';
-import { hasParticipatingAccount, authenticate } from './auth.factory.js';
+import { ensureBootstrapKey } from './bootstrap.factory.js';
 import { store } from './state/store.js';
 
 const SURVEY_ID = 'survey-abc';
@@ -69,6 +70,7 @@ beforeEach(() => {
   h.instances.length = 0;
   h.isUsedImpl.current = async () => false;
   h.fetchImpl.current = async () => ['ipfs-cid-1', POOL_ID, '2026-08-28'];
+  (ensureBootstrapKey as any).mockResolvedValue('0x00000000000000000000000000000000000000be');
   store.clear();
 });
 
@@ -109,27 +111,20 @@ describe('resolveRootGate (root "/" entry gate)', () => {
   });
 });
 
-describe('resolveSurveyGate (/surveys/:surveyId entry gate)', () => {
-  function mockParticipation(participant: boolean, authResult: boolean) {
-    (hasParticipatingAccount as any).mockResolvedValue(participant);
-    (authenticate as any).mockResolvedValue(authResult);
-  }
-
-  it('missing surveyId -> navigate /surveys (no fetch, no participation checks)', async () => {
-    mockParticipation(true, true);
+describe('resolveSurveyGate (/surveys/:surveyId entry gate — deferred bootstrap identity)', () => {
+  it('missing surveyId -> navigate /surveys (no fetch, no bootstrap)', async () => {
     const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, '');
 
     expect(decision).toEqual({ navigate: '/surveys' });
-    expect(hasParticipatingAccount).not.toHaveBeenCalled();
-    expect(authenticate).not.toHaveBeenCalled();
+    expect(ensureBootstrapKey).not.toHaveBeenCalled();
   });
 
-  it('pool member -> proceed, and fetchSurvey populates the store', async () => {
-    mockParticipation(true, true);
+  it('proceeds after ensuring the bootstrap leaf, and fetchSurvey populates the store', async () => {
     const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
 
     expect(decision).toEqual({ proceed: true });
-    expect(authenticate).not.toHaveBeenCalled();
+    // deferred identity at entry = ensure the random bootstrap leaf E exists + persisted
+    expect(ensureBootstrapKey).toHaveBeenCalledTimes(1);
 
     // fetchSurvey populates the store via setSurveyData + setActiveSurvey
     expect(store.getSurveyData(SURVEY_ID)).toMatchObject({
@@ -140,29 +135,28 @@ describe('resolveSurveyGate (/surveys/:surveyId entry gate)', () => {
     expect(store.activeSurvey).toMatchObject({ id: SURVEY_ID });
   });
 
-  it('non-member who authenticates successfully -> proceed', async () => {
-    mockParticipation(false, true);
+  it('does NOT gate on on-chain pool membership (E is pre-registration at entry)', async () => {
+    // The gate never consults isPoolMember/authenticate — the random leaf is
+    // pre-registration, so entry is ensured bootstrap E, not a membership read.
     const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
 
     expect(decision).toEqual({ proceed: true });
-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
-  });
-
-  it('non-member whose authentication fails -> navigate /invalid-card', async () => {
-    mockParticipation(false, false);
-    const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
-
-    expect(decision).toEqual({ navigate: '/invalid-card' });
-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
+    expect(ensureBootstrapKey).toHaveBeenCalledTimes(1);
   });
 
   it('propagates a rejection from fetchSurvey', async () => {
-    mockParticipation(true, true);
     h.fetchImpl.current = async () => {
       throw new Error('fetch exploded');
     };
     await expect(
       resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID),
     ).rejects.toThrow('fetch exploded');
+  });
+
+  it('propagates a rejection from ensureBootstrapKey', async () => {
+    (ensureBootstrapKey as any).mockRejectedValue(new Error('bootstrap exploded'));
+    await expect(
+      resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID),
+    ).rejects.toThrow('bootstrap exploded');
   });
 });

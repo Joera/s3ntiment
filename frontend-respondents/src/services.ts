@@ -67,10 +67,12 @@ export class ServiceContainer implements IServices {
     this.ipfs = new IPFSMethods(import.meta.env.VITE_KUBO_ENDPOINT, import.meta.env.VITE_PINATA_JWT, import.meta.env.VITE_PINATA_GATEWAY)
     this.nillDB = new NillDBUserService(import.meta.env.VITE_NIL_BUILDER_DID,  import.meta.env.VITE_NILDB_NODES);
     this.oprf = new OPRFService(import.meta.env.VITE_HUMAN_NETWORK_SIGNER_URL);
-    
-    await this.waap.createWallet(base);
-    await this.oprf.init()
 
+    // Deferred identity (RFC-deferred-identity-persistence): the eager WaaP
+    // createWallet (pops the SDK) and OPRF wasm init were the entry-funnel cost
+    // Task 1 removes from the random-bootstrap path. They are no longer called at
+    // startup; the extracted humanWallet.factory (WaaP login + OPRF derive) will
+    // re-establish them when the post-survey persist route runs.
     this.initialized = true;
 
     return;

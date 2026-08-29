@@ -5,8 +5,7 @@ import { store } from '../state/store.js';
 import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
 
 import { router } from '../router.js';
-import { base } from 'viem/chains';
-import { authenticate } from '../auth.factory.js';
+import { ensureBootstrapKey } from '../bootstrap.factory.js';
 
 
 export class UsedCardController {
@@ -58,12 +57,11 @@ export class UsedCardController {
 
         btn?.addEventListener("click", async () => {
            
-            const isParticipant = await authenticate(this.services, this.surveyId)
-            if (isParticipant) {
-                router.navigate(`/surveys/${this.surveyId}`)
-            } else {
-                alert("You did not register for this survey")
-            }
+            // Deferred identity: the WaaP email/phone re-login is deferred to the
+            // post-survey persist step. "Sign in" here re-establishes the on-device
+            // random bootstrap leaf `E` (load-or-create + persist) and proceeds.
+            await ensureBootstrapKey(this.services);
+            router.navigate(`/surveys/${this.surveyId}`)
         });
     }
 

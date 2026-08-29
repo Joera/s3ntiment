@@ -4,6 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // intercepted before resolution). We keep the Node environment and never pull
 // jsdom: the small browser surface the controller touches (window/document/
 // alert/localStorage) is stubbed below instead.
+//
+// Task 1 (deferred identity): the controller no longer calls the human-wallet
+// authenticate() — entry establishes the random bootstrap leaf E via the mocked
+// ensureBootstrapKey, then always registers the (pre-registration) leaf.
 
 const h = vi.hoisted(() => ({
   // Configurable per-test behaviour of the mocked Card.register().
@@ -28,14 +32,14 @@ vi.mock('@s3ntiment/shared', () => ({
 }));
 vi.mock('@s3ntiment/shared/components', () => ({}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
-vi.mock('../auth.factory.js', () => ({ authenticate: vi.fn() }));
+vi.mock('../bootstrap.factory.js', () => ({ ensureBootstrapKey: vi.fn() }));
 vi.mock('../onpageload.js', () => ({ removeSplash: vi.fn() }));
 
 import { AuthController } from './auth-ctrlr.js';
 // These resolve to the mocked factories above.
 import { Card, parseCardURL, fetchSurvey } from '@s3ntiment/shared';
 import { router } from '../router.js';
-import { authenticate } from '../auth.factory.js';
+import { ensureBootstrapKey } from '../bootstrap.factory.js';
 import { store } from '../state/store.js';
 
 const SURVEY_ID = 'survey-abc';
@@ -55,7 +59,7 @@ const CARD_DATA = {
 };
 
 function fakeServices(): any {
-  return { account: { getAddress: vi.fn(() => '0x00000000000000000000000000000000000000aa') } };
+  return {};
 }
 
 function installBrowserGlobals() {
@@ -83,11 +87,11 @@ beforeEach(() => {
 
   (parseCardURL as any).mockResolvedValue(CARD_DATA);
   (fetchSurvey as any).mockResolvedValue([IPFS_CID, POOL_ID, CREATED_AT]);
-  (authenticate as any).mockResolvedValue(false);
+  (ensureBootstrapKey as any).mockResolvedValue('0x00000000000000000000000000000000000000aa');
 });
 
 describe('AuthController (root route "/")', () => {
-  it('runs the full auth+registration flow: parse -> fetch -> store -> authenticate -> register -> navigate', async () => {
+  it('runs the deferred-identity entry flow: parse -> fetch -> store -> ensure bootstrap E -> register -> navigate', async () => {
     const ctrl = new AuthController(fakeServices());
     await ctrl.render();
 
@@ -107,11 +111,11 @@ describe('AuthController (root route "/")', () => {
       pool: POOL_ID,
     });
 
-    // authenticate invoked with (services, poolId)
-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
+    // entry establishes the random bootstrap leaf (no human-wallet authenticate)
+    expect(ensureBootstrapKey).toHaveBeenCalledWith(expect.anything());
 
-    // not (yet) a participant -> card.register (on-chain registerInPool, waits
-    // for receipt) is called with (services, surveyStore, poolId)
+    // leaf E is pre-registration at entry, so card.register (on-chain registerInPool,
+    // waits for receipt) runs with (services, surveyStore, poolId)
     const card: any = h.instances[0];
     expect(card).toBeDefined();
     expect(card.register).toHaveBeenCalledWith(
@@ -124,18 +128,6 @@ describe('AuthController (root route "/")', () => {
     expect(router.navigate).toHaveBeenCalledTimes(1);
     expect(router.navigate).toHaveBeenCalledWith('/surveys/' + SURVEY_ID);
     expect((globalThis as any).alert).not.toHaveBeenCalled();
-  });
-
-  it('skips card.register and navigates when the user is already a participant', async () => {
-    (authenticate as any).mockResolvedValue(true);
-
-    const ctrl = new AuthController(fakeServices());
-    await ctrl.render();
-
-    expect(router.navigate).toHaveBeenCalledWith('/surveys/' + SURVEY_ID);
-    // already a participant -> no on-chain registration
-    expect(h.instances.length).toBe(1); // Card still constructed
-    expect(h.instances[0].register).not.toHaveBeenCalled();
   });
 
   it('alerts and does not navigate when the registration receipt is not success', async () => {
@@ -166,7 +158,7 @@ describe('AuthController (root route "/")', () => {
     await ctrl.render();
 
     expect(fetchSurvey).not.toHaveBeenCalled();
-    expect(authenticate).not.toHaveBeenCalled();
+    expect(ensureBootstrapKey).not.toHaveBeenCalled();
     expect(h.instances.length).toBe(0);
     expect(router.navigate).not.toHaveBeenCalled();
   });

@@ -2,18 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- Mocks (hoisted so the controller's own imports are intercepted before
 // resolution). The shared components barrel is neutralised (it registers
-// custom elements at top level), the router singleton is faked, and the heavy
-// `authenticate` factory is replaced per-test. `store` stays REAL (as in the
+// custom elements at top level), the router singleton is faked, and the
+// deferred bootstrap factory is replaced per-test. `store` stays REAL (as in the
 // auth-ctrlr / survey-ctrlr tests) since the controller simply binds a UI view
 // to it; `viem/chains` and the JSON deployment import load natively in node.
 
 vi.mock('@s3ntiment/shared/components', () => ({}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
-vi.mock('../auth.factory.js', () => ({ authenticate: vi.fn() }));
+vi.mock('../bootstrap.factory.js', () => ({ ensureBootstrapKey: vi.fn() }));
 
 import { UsedCardController } from './used-card-ctrlr.js';
 import { router } from '../router.js';
-import { authenticate } from '../auth.factory.js';
+import { ensureBootstrapKey } from '../bootstrap.factory.js';
 
 const SURVEY_ID = 'survey-abc';
 
@@ -38,6 +38,7 @@ function installBrowserGlobals() {
 beforeEach(() => {
   vi.clearAllMocks();
   installBrowserGlobals();
+  (ensureBootstrapKey as any).mockResolvedValue('0x00000000000000000000000000000000000000aa');
 });
 
 afterEach(() => {
@@ -56,49 +57,31 @@ describe('UsedCardController — "Sign in" flow', () => {
     expect((ctrl as any).reactiveViews.length).toBe(1);
   });
 
-  it('navigates to the survey route when authenticate() succeeds', async () => {
-    (authenticate as any).mockResolvedValue(true);
-
+  it('re-establishes the bootstrap identity and navigates to the survey when clicked', async () => {
     const ctrl = new UsedCardController({} as any, SURVEY_ID);
     await ctrl.render();
 
     const click = (globalThis as any).__usedCardGetClick('click');
     await click();
 
-    expect(authenticate).toHaveBeenCalledTimes(1);
-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), SURVEY_ID);
+    // "Sign in" is now deferred identity: ensure the on-device bootstrap leaf E
+    // (load-or-create + persist) and proceed — no WaaP/OPRF authenticate().
+    expect(ensureBootstrapKey).toHaveBeenCalledTimes(1);
+    expect(ensureBootstrapKey).toHaveBeenCalledWith(expect.anything());
     expect(router.navigate).toHaveBeenCalledTimes(1);
     expect(router.navigate).toHaveBeenCalledWith(`/surveys/${SURVEY_ID}`);
     expect((globalThis as any).alert).not.toHaveBeenCalled();
   });
 
-  it('alerts and does not navigate when authenticate() returns false', async () => {
-    (authenticate as any).mockResolvedValue(false);
-
-    const ctrl = new UsedCardController({} as any, SURVEY_ID);
-    await ctrl.render();
-
-    const click = (globalThis as any).__usedCardGetClick('click');
-    await click();
-
-    expect((globalThis as any).alert).toHaveBeenCalledWith(
-      'You did not register for this survey'
-    );
-    expect(router.navigate).not.toHaveBeenCalled();
-  });
-
-  it('propagates a reject from authenticate() without navigating or alerting', async () => {
-    // The controller does not try/catch authenticate(), so a rejected promise
-    // propagates rather than falling through to the alert branch — asserting
-    // the honest source behaviour.
-    (authenticate as any).mockRejectedValue(new Error('auth blew up'));
+  it('propagates a reject from ensureBootstrapKey without navigating or alerting', async () => {
+    (ensureBootstrapKey as any).mockRejectedValue(new Error('bootstrap blew up'));
 
     const ctrl = new UsedCardController({} as any, SURVEY_ID);
     await ctrl.render();
 
     const click = (globalThis as any).__usedCardGetClick('click');
 
-    await expect(click()).rejects.toThrow('auth blew up');
+    await expect(click()).rejects.toThrow('bootstrap blew up');
     expect(router.navigate).not.toHaveBeenCalled();
     expect((globalThis as any).alert).not.toHaveBeenCalled();
   });
