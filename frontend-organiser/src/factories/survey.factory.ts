@@ -1,4 +1,5 @@
 import { getAddress, http, keccak256, toBytes } from "viem";
+import { base } from "viem/chains";
 import { Batch } from "@s3ntiment/shared";
 
 import { isCid } from "../utils/regex";
@@ -15,7 +16,9 @@ export const createBatch = async (services: any, batch: Batch, poolId: string, s
     batch.id = getAddress(batchId);
     batch.survey = surveyId;
     batch.pool = poolId;
-    batch.cards = await generateCardSecrets(batchAccount, batch);
+    // card-v2: cards are signed bound to the survey-store deployment on this
+    // chain (base) — must match the on-chain digest (address(this), block.chainid).
+    batch.cards = await generateCardSecrets(batchAccount, batch, surveyStore.address, BigInt(base.id));
     batch.cards = await uploadToPinata(services, batch.cards);
     return batch;
 }

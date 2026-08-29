@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { base } from 'viem/chains';
+import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' };
 
 // survey.factory's only heavy/network surface is delegated to invitation.factory
 // (createBatchWallet / generateCardSecrets / uploadToPinata), which we mock here.
@@ -52,8 +54,14 @@ describe('survey.factory — createBatch', () => {
     expect(out.id).toMatch(/^0x[0-9a-fA-F]{40}$/);
     expect(out.survey).toBe('survey-1');
     expect(out.pool).toBe('pool-1');
-    // generateCardSecrets was called with the derived batchAccount + the batch.
-    expect(mockGenerateCardSecrets).toHaveBeenCalledWith(batchAccount, batch);
+    // generateCardSecrets was called with the derived batchAccount + the batch,
+    // bound to the survey-store deployment on base (card-v2).
+    expect(mockGenerateCardSecrets).toHaveBeenCalledWith(
+      batchAccount,
+      batch,
+      surveyStore.address,
+      BigInt(base.id),
+    );
   });
 
   it('uploads generated cards to pinata with `${batchId}-${i}` names', async () => {

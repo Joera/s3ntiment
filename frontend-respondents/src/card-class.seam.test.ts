@@ -25,6 +25,12 @@ const SURVEY_STORE = {
 
 const POOL_ID = '0x00000000000000000000000000000000000000cd';
 
+// card-v2: the card message is bound to pool/contract/chain. CONTEXT is what
+// parseCardURL needs to reconstruct the digest and recover the survey owner.
+const STORE_ADDRESS = `0x${'11'.repeat(20)}`;
+const CHAIN_ID = 8453n;
+const CONTEXT = { poolId: POOL_ID, storeAddress: STORE_ADDRESS, chainId: CHAIN_ID };
+
 function makeCardData(overrides: Partial<CardData> = {}): CardData {
   return {
     nullifier: NULLIFIER,
@@ -54,13 +60,13 @@ describe('Card.isUsed', () => {
     const read = services.viem.read.mockResolvedValue(true);
     const card = new Card(makeCardData());
 
-    const result = await card.isUsed(services, SURVEY_STORE);
+    const result = await card.isUsed(services, SURVEY_STORE, POOL_ID);
 
     expect(read).toHaveBeenCalledWith(
       SURVEY_STORE.address,
       SURVEY_STORE.abi,
       'isNullifierUsed',
-      [NULLIFIER, BATCH_ID],
+      [POOL_ID, NULLIFIER, BATCH_ID],
     );
     expect(result).toBe(true);
   });
@@ -69,13 +75,13 @@ describe('Card.isUsed', () => {
     const read = services.viem.read.mockResolvedValue(false);
     const card = new Card(makeCardData());
 
-    const result = await card.isUsed(services, SURVEY_STORE);
+    const result = await card.isUsed(services, SURVEY_STORE, POOL_ID);
 
     expect(read).toHaveBeenCalledWith(
       SURVEY_STORE.address,
       SURVEY_STORE.abi,
       'isNullifierUsed',
-      [NULLIFIER, BATCH_ID],
+      [POOL_ID, NULLIFIER, BATCH_ID],
     );
     expect(result).toBe(false);
   });
@@ -84,7 +90,7 @@ describe('Card.isUsed', () => {
     services.viem.read.mockRejectedValue(new Error('onchain boom'));
     const card = new Card(makeCardData());
 
-    await expect(card.isUsed(services, SURVEY_STORE)).rejects.toThrow(
+    await expect(card.isUsed(services, SURVEY_STORE, POOL_ID)).rejects.toThrow(
       'onchain boom',
     );
   });
@@ -149,16 +155,16 @@ describe('parseCardURL edge cases (beyond happy + missing-params, which are pinn
     const href = `http://respondent.local/?n=${NULLIFIER}&b=${BATCH_ID}&sig=not-a-hex-signature&s=${SURVEY_ID}`;
     // recoverMessageAddress throws on the malformed signature -> parseCardURL
     // catches it and returns null.
-    await expect(parseCardURL(href)).resolves.toBeNull();
+    await expect(parseCardURL(href, CONTEXT)).resolves.toBeNull();
   });
 
   it('tolerates extra query params beyond n/b/sig/s', async () => {
-    const signature = await signCardMessage(batchOwner, NULLIFIER, BATCH_ID);
+    const signature = await signCardMessage(batchOwner, CONTEXT, NULLIFIER, BATCH_ID);
     const href =
       `http://respondent.local/?n=${NULLIFIER}&b=${BATCH_ID}&sig=${signature}` +
       `&s=${SURVEY_ID}&utm_source=qr&utm_medium=print&foo=bar`;
 
-    const data = await parseCardURL(href);
+    const data = await parseCardURL(href, CONTEXT);
 
     expect(data).not.toBeNull();
     const card = data as CardData;
@@ -171,12 +177,12 @@ describe('parseCardURL edge cases (beyond happy + missing-params, which are pinn
     // base64url-style nullifier as the organiser generates; the escaped form is
     // what survives a real query string for nullifiers with reserved chars.
     const encodedNullifier = encodeURIComponent(NULLIFIER);
-    const signature = await signCardMessage(batchOwner, NULLIFIER, BATCH_ID);
+    const signature = await signCardMessage(batchOwner, CONTEXT, NULLIFIER, BATCH_ID);
     const href =
       `http://respondent.local/?n=${encodedNullifier}&b=${BATCH_ID}` +
       `&sig=${signature}&s=${SURVEY_ID}`;
 
-    const data = await parseCardURL(href);
+    const data = await parseCardURL(href, CONTEXT);
 
     expect(data).not.toBeNull();
     const card = data as CardData;

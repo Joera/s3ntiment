@@ -12,20 +12,32 @@ const {deployAll} = setupSurveyStoreFixtures(provider);
 // Card / SMC helpers.
 //
 // registerInPool validates a card before joining:
-//   messageHash = keccak256(abi.encodePacked(nullifier, "|", batchId))
+//   messageHash = keccak256(abi.encode(poolId, nullifier, batchId,
+//                                   address(this), block.chainid))
 //   ethSignedHash = keccak256("\x19Ethereum Signed Message:\n32" + messageHash)
 //   signer = ecrecover(ethSignedHash, signature)  — must equal batchId
 // The caller must be an SMC whose owner() is the respondent's pool-wallet EOA.
 //
 // cardMessageHash / signCardMessage now come from the shared encoding module
 // (@s3ntiment/shared/invites/encoding) — the single source of truth shared
-// with the frontends. The recovered signer is deterministic because we sign
-// the exact 32-byte ethSignedHash digest produced by that module.
+// with the frontends (CARD-V2 digest: bound to pool + contract + chain). The
+// recovered signer is deterministic because we sign the exact 32-byte
+// ethSignedHash digest produced by that module over the deployment binding.
 // ---------------------------------------------------------------------------
 
 function createBatchWallet(byte = 'aa') {
 	// Fixed 32-byte private key → deterministic batch-wallet address.
 	return privateKeyToAccount('0x' + byte.repeat(32));
+}
+
+// Local hardhat chain id (EDR-simulated default network) == block.chainid the
+// deployed contract sees. Must match the off-chain digest binding so signatures
+// produced by the shared encoding are accepted on-chain.
+const CHAIN_ID = BigInt(await provider.request({method: 'eth_chainId'}));
+
+// Builds the pool/contract/chain card-binding context from the deployed store.
+function cardContext(storeAddress: string, poolId: string) {
+	return {poolId, storeAddress, chainId: CHAIN_ID};
 }
 
 describe('S3ntimentSurveyStore', function () {
@@ -651,7 +663,8 @@ describe('S3ntimentSurveyStore', function () {
 				account: safe,
 			});
 
-			const signature = await signCardMessage(batchWallet, nullifier, batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, nullifier, batchAddress);
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,
@@ -679,7 +692,7 @@ describe('S3ntimentSurveyStore', function () {
 			expect(
 				await env.read(S3ntimentSurveyStore, {
 					functionName: 'isNullifierUsed',
-					args: [nullifier, batchAddress],
+					args: [poolId, nullifier, batchAddress],
 				}),
 			).toEqual(true);
 			// Batch card count incremented
@@ -704,11 +717,12 @@ describe('S3ntimentSurveyStore', function () {
 				account: safe,
 			});
 
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
 			const members = [unnamedAccounts[3], unnamedAccounts[4]];
 			for (let i = 0; i < members.length; i++) {
 				const member = members[i];
 				const nullifier = `card-${i}`;
-				const signature = await signCardMessage(batchWallet, nullifier, batchAddress);
+				const signature = await signCardMessage(batchWallet, context, nullifier, batchAddress);
 				const mockSmc = await viem.deployContract('MockSMC', [member]);
 				await mockSmc.write.register([
 					S3ntimentSurveyStore.address,
@@ -756,7 +770,8 @@ describe('S3ntimentSurveyStore', function () {
 				account: otherSafe,
 			});
 
-			const signature = await signCardMessage(batchWallet, 'card-scope', batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolA);
+			const signature = await signCardMessage(batchWallet, context, 'card-scope', batchAddress);
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,
@@ -844,7 +859,8 @@ describe('S3ntimentSurveyStore', function () {
 			});
 
 			// Sign with a different wallet than the batch wallet.
-			const signature = await signCardMessage(wrongSigner, 'card-sig', batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(wrongSigner, context, 'card-sig', batchAddress);
 
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 			await expect(
@@ -875,7 +891,8 @@ describe('S3ntimentSurveyStore', function () {
 				account: safe,
 			});
 
-			const signature = await signCardMessage(batchWallet, nullifier, batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, nullifier, batchAddress);
 
 			// First use: ok
 			const smc1 = await viem.deployContract('MockSMC', [poolWallet]);
@@ -918,7 +935,8 @@ describe('S3ntimentSurveyStore', function () {
 			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
 
 			// join once with card-1
-			let signature = await signCardMessage(batchWallet, 'card-1', batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			let signature = await signCardMessage(batchWallet, context, 'card-1', batchAddress);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,
 				poolId,
@@ -928,7 +946,7 @@ describe('S3ntimentSurveyStore', function () {
 			]);
 
 			// second join with a fresh, valid card still reverts
-			signature = await signCardMessage(batchWallet, 'card-2', batchAddress);
+			signature = await signCardMessage(batchWallet, context, 'card-2', batchAddress);
 			await expect(
 				mockSmc.write.register([
 					S3ntimentSurveyStore.address,
@@ -958,7 +976,8 @@ describe('S3ntimentSurveyStore', function () {
 			// A card signed by the batch wallet, but called directly from an EOA
 			// (not an SMC) — identity resolution ISMC(msg.sender).owner() cannot
 			// run, so registration must revert.
-			const signature = await signCardMessage(batchWallet, 'card-eoa', batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, 'card-eoa', batchAddress);
 			await expect(
 				env.execute(S3ntimentSurveyStore, {
 					functionName: 'registerInPool',
@@ -1035,8 +1054,9 @@ describe('S3ntimentSurveyStore', function () {
 			const nullifiers = ['card-lowv-0', 'card-lowv-1'];
 			const members = [poolWallet, secondWallet];
 			const lowVs = new Set<number>();
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
 			for (let i = 0; i < members.length; i++) {
-				const sig = await signCardMessage(batchWallet, nullifiers[i], batchAddress);
+				const sig = await signCardMessage(batchWallet, context, nullifiers[i], batchAddress);
 				const v = parseInt(sig.slice(-2), 16); // canonical v: 27 or 28
 				const lowV = v - 27; // 0 or 1
 				lowVs.add(lowV);
@@ -1087,7 +1107,8 @@ describe('S3ntimentSurveyStore', function () {
 				account: safe,
 			});
 
-			const signature = await signCardMessage(batchWallet, 'card-v26', batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, 'card-v26', batchAddress);
 			// v = 0x1a = 26. The coverage audit's premise was "v=26 → 27 valid", but per
 			// the source `if (v < 27) v += 27` maps 26 → 53, which fails
 			// `require(v == 27 || v == 28)`. This test pins the REAL behaviour: revert.
@@ -1114,7 +1135,7 @@ describe('S3ntimentSurveyStore', function () {
 			expect(
 				await env.read(S3ntimentSurveyStore, {
 					functionName: 'isNullifierUsed',
-					args: ['never-used-card', '0x' + '99'.repeat(20)],
+					args: ['pool-x', 'never-used-card', '0x' + '99'.repeat(20)],
 				}),
 			).toEqual(false);
 		});
@@ -1148,6 +1169,194 @@ describe('S3ntimentSurveyStore', function () {
 				`VM Exception while processing transaction: reverted with reason string 'Invalid signature length'`,
 			);
 		});
+
+		// -------------------------------------------------------------------
+		// CARD-V2 — regression tests pinning the audit fixes (#1, #6, #7).
+		// -------------------------------------------------------------------
+
+		it('does not let a card signed for pool A be redeemed in a different pool B (cross-pool redemption fails)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWallet = unnamedAccounts[3];
+			const poolA = 'pool-cross-a';
+			const poolB = 'pool-cross-b';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+
+			// The same batch wallet is registered in BOTH pools, so the only
+			// thing stopping a cross-pool redemption is the per-pool digest.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['a1', poolA, 'QmCidA', [batchAddress]],
+				account: safe,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['b1', poolB, 'QmCidB', [batchAddress]],
+				account: safe,
+			});
+
+			// The card is signed for pool A only (digest embeds poolA).
+			const contextA = cardContext(S3ntimentSurveyStore.address, poolA);
+			const signature = await signCardMessage(batchWallet, contextA, 'cross-card', batchAddress);
+			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
+
+			// Redeeming the pool-A-signed card in pool B: registerInPool recomputes
+			// the digest with poolB embedded, which does not match what was signed
+			// (poolA) — recovery yields a signer != batchId -> InvalidSignature.
+			await expect(
+				mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolB,
+					'cross-card',
+					batchAddress,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'InvalidSignature()'`);
+
+			// The intended pool-A redemption STILL succeeds afterwards: the failed
+			// wrong-pool attempt did not burn the nullifier usable in pool A.
+			await mockSmc.write.register([
+				S3ntimentSurveyStore.address,
+				poolA,
+				'cross-card',
+				batchAddress,
+				signature,
+			]);
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolA, poolWallet],
+				}),
+			).toEqual(true);
+			// Against pool B the same nullifier was never touched.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolB, 'cross-card', batchAddress],
+				}),
+			).toEqual(false);
+		});
+
+		it('keeps nullifiers independent per pool: burned in pool A, still redeemable in pool B', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWalletA = unnamedAccounts[3];
+			const poolWalletB = unnamedAccounts[4];
+			const poolA = 'pool-null-a';
+			const poolB = 'pool-null-b';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			const nullifier = 'shared-nullifier';
+
+			// Same batch wallet registered in both pools.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['a1', poolA, 'QmCidA', [batchAddress]],
+				account: safe,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['b1', poolB, 'QmCidB', [batchAddress]],
+				account: safe,
+			});
+
+			const contextA = cardContext(S3ntimentSurveyStore.address, poolA);
+			const contextB = cardContext(S3ntimentSurveyStore.address, poolB);
+
+			// Redeem the SAME (nullifier, batchId) card in pool A (signed for A).
+			const sigA = await signCardMessage(batchWallet, contextA, nullifier, batchAddress);
+			const smcA = await viem.deployContract('MockSMC', [poolWalletA]);
+			await smcA.write.register([
+				S3ntimentSurveyStore.address,
+				poolA,
+				nullifier,
+				batchAddress,
+				sigA,
+			]);
+
+			// Burned in pool A...
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolA, nullifier, batchAddress],
+				}),
+			).toEqual(true);
+
+			// ...yet the SAME nullifier is still usable in pool B (signed for B).
+			const sigB = await signCardMessage(batchWallet, contextB, nullifier, batchAddress);
+			const smcB = await viem.deployContract('MockSMC', [poolWalletB]);
+			await smcB.write.register([
+				S3ntimentSurveyStore.address,
+				poolB,
+				nullifier,
+				batchAddress,
+				sigB,
+			]);
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolB, poolWalletB],
+				}),
+			).toEqual(true);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolB, nullifier, batchAddress],
+				}),
+			).toEqual(true);
+		});
+
+		it('reverts when the SMC owner is a zero address (InvalidMemberAddress)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-reg-zero-owner';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, 'card-zero', batchAddress);
+
+			// A malicious SMC whose owner() returns address(0).
+			const mockSmc = await viem.deployContract('MockSMC', [
+				'0x0000000000000000000000000000000000000000',
+			]);
+			await expect(
+				mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					'card-zero',
+					batchAddress,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'InvalidMemberAddress()'`);
+
+			// The whole tx reverted — the empty owner check runs BEFORE writing
+			// membership, and the revert rolls back the nullifier burn, so the card
+			// is NOT marked used and can still be redeemed by a good SMC.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isNullifierUsed',
+					args: [poolId, 'card-zero', batchAddress],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, '0x0000000000000000000000000000000000000000'],
+				}),
+			).toEqual(false);
+		});
 	});
 
 	describe('revokeMember (Safe-gated governance)', function () {
@@ -1163,7 +1372,8 @@ describe('S3ntimentSurveyStore', function () {
 				args: [surveyId, poolId, 'QmCid1', [batchAddress]],
 				account: safe,
 			});
-			const signature = await signCardMessage(batchWallet, 'card-revoke-' + poolId, batchAddress);
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, 'card-revoke-' + poolId, batchAddress);
 			const mockSmc = await viem.deployContract('MockSMC', [member]);
 			await mockSmc.write.register([
 				S3ntimentSurveyStore.address,

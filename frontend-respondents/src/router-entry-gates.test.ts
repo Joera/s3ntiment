@@ -84,17 +84,19 @@ describe('resolveRootGate (root "/" entry gate)', () => {
     const decision = await resolveRootGate(fakeServices(), CARD_DATA, SURVEY_STORE);
 
     expect(decision).toEqual({ navigate: `/used-card/${SURVEY_ID}` });
-    // Card built from cardData; isUsed consulted with (services, surveyStore)
+    // Card built from cardData; isUsed consulted with (services, surveyStore, poolId)
     const card: any = h.instances[0];
     expect(card).toBeDefined();
     expect(card.data).toBe(CARD_DATA);
-    expect(card.isUsed).toHaveBeenCalledWith(expect.anything(), SURVEY_STORE);
+    // poolId resolved from the survey fetch (root gate can't see the pool on the
+    // card URL) before the per-pool isUsed read.
+    expect(card.isUsed).toHaveBeenCalledWith(expect.anything(), SURVEY_STORE, POOL_ID);
   });
 
   it('fresh card -> proceed', async () => {
     const decision = await resolveRootGate(fakeServices(), CARD_DATA, SURVEY_STORE);
     expect(decision).toEqual({ proceed: true });
-    expect(h.instances[0].isUsed).toHaveBeenCalledWith(expect.anything(), SURVEY_STORE);
+    expect(h.instances[0].isUsed).toHaveBeenCalledWith(expect.anything(), SURVEY_STORE, POOL_ID);
   });
 
   it('propagates a rejection from Card.isUsed', async () => {

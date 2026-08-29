@@ -4,6 +4,7 @@ export interface CardData {
     signature: string;
     surveyOwner?: string;
     surveyId?: string;
+    poolId?: string;
     url?: string;
     svgString?: string
     isUsed?: boolean

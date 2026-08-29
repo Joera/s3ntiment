@@ -95,8 +95,10 @@ contract S3ntimentSurveyStore {
     mapping(string => mapping(address => Batch)) private batches;
     mapping(string => address[]) private poolBatchIds;
 
-    // Nullifiers — globally unique, prevent card reuse
-    mapping(bytes32 => bool) public usedNullifiers;
+    // Nullifiers — scoped per pool, prevent card reuse WITHIN a pool. The outer
+    // key (poolId) is defense-in-depth on top of messageHash (which already
+    // embeds the poolId), so a card burned in one pool can never affect another.
+    mapping(string => mapping(bytes32 => bool)) private usedNullifiers;
 
     // Pool membership — pool wallet EOA is the member identity
     mapping(string => mapping(address => bool)) private poolMembers;
@@ -113,6 +115,7 @@ contract S3ntimentSurveyStore {
     error BatchNotFound();
     error BatchAlreadyRegistered();
     error InvalidBatchId();
+    error InvalidMemberAddress();
     error NullifierAlreadyUsed();
     error InvalidSignature();
     error AlreadyPoolMember();
@@ -305,7 +308,8 @@ contract S3ntimentSurveyStore {
      * @param poolId     Pool to join
      * @param nullifier  Unique card identifier from QR code
      * @param batchId    Batch wallet address this card belongs to
-     * @param signature  Signature of (nullifier | batchId) by the batch wallet
+     * @param signature  Signature of the pool/contract/chain-bound card message
+     *                   by the batch wallet
      */
     function registerInPool(
         string memory poolId,
@@ -316,22 +320,33 @@ contract S3ntimentSurveyStore {
         if (pools[poolId].safe == address(0)) revert PoolNotFound();
         if (batches[poolId][batchId].createdAt == 0) revert BatchNotFound();
 
-        // Verify card signature
-        bytes32 messageHash = keccak256(abi.encodePacked(nullifier, "|", batchId));
+        // Verify the card signature over the pool/contract/chain-bound digest.
+        //   messageHash = keccak256(abi.encode(poolId, nullifier, batchId, address(this), block.chainid))
+        // abi.encode (NOT encodePacked) is required: with two dynamic fields
+        // (poolId, nullifier), packed concatenation is no longer collision-safe.
+        // Binding address(this) + block.chainid scopes the card to this contract
+        // on this chain (audit #6), and poolId scopes it to this pool (audit #1).
+        bytes32 messageHash = keccak256(
+            abi.encode(poolId, nullifier, batchId, address(this), block.chainid)
+        );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash)
         );
         address signer = _recoverSigner(ethSignedHash, signature);
 
         if (signer != batchId) revert InvalidSignature();
-        if (usedNullifiers[messageHash]) revert NullifierAlreadyUsed();
+        if (usedNullifiers[poolId][messageHash]) revert NullifierAlreadyUsed();
 
-        // Burn nullifier
-        usedNullifiers[messageHash] = true;
+        // Burn nullifier (scoped per pool; messageHash already embeds poolId).
+        usedNullifiers[poolId][messageHash] = true;
         batches[poolId][batchId].cardCount++;
 
         // Resolve identity: SMC owner is the pool wallet EOA
         address poolWallet = ISMC(msg.sender).owner();
+        // Reject a zero-address owner (audit #7): a malicious SMC must not write
+        // a bogus poolMembers[poolId][address(0)] = true. Reverting here rolls
+        // back the nullifier burn + cardCount increment above.
+        if (poolWallet == address(0)) revert InvalidMemberAddress();
         if (poolMembers[poolId][poolWallet]) revert AlreadyPoolMember();
         poolMembers[poolId][poolWallet] = true;
     }
@@ -363,9 +378,16 @@ contract S3ntimentSurveyStore {
         return poolMembers[poolId][member];
     }
 
-    function isNullifierUsed(string memory nullifier, address batchId) external view returns (bool) {
-        bytes32 cardHash = keccak256(abi.encodePacked(nullifier, "|", batchId));
-        return usedNullifiers[cardHash];
+    function isNullifierUsed(
+        string memory poolId,
+        string memory nullifier,
+        address batchId
+    ) external view returns (bool) {
+        bytes32 cardHash = keccak256(
+            abi.encode(poolId, nullifier, batchId, address(this), block.chainid)
+        );
+        if (usedNullifiers[poolId][cardHash]) return true;
+        return false;
     }
 
     // =========================================================================
