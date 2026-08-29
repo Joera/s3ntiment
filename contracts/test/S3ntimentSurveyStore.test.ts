@@ -255,6 +255,49 @@ describe('S3ntimentSurveyStore', function () {
 			});
 			expect(poolBatches).toEqual([]);
 		});
+
+		it('reverts during createSurvey bootstrap for a zero-address batch (InvalidBatchId)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-bootstrap-zero';
+			const zeroBatch = '0x0000000000000000000000000000000000000000';
+
+			// A zero-address batch in the INITIAL batchIds array is routed through
+			// _registerBatch by the bootstrap path — the InvalidBatchId branch that is
+			// otherwise only exercised via registerBatch. The whole tx reverts.
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'createSurvey',
+					args: ['s1', poolId, 'QmCid1', [zeroBatch]],
+					account: safe,
+				}),
+			).toBeRejectedWith(`custom error 'InvalidBatchId()'`);
+
+			// Also a mixed array: a valid batch first, then a zero address.
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'createSurvey',
+					args: ['s2', poolId, 'QmCid1', ['0x' + '11'.repeat(20), zeroBatch]],
+					account: safe,
+				}),
+			).toBeRejectedWith(`custom error 'InvalidBatchId()'`);
+
+			// The whole tx rolled back: the implicitly-created pool (and survey) did
+			// not persist despite _createPool having run before the batch loop.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'poolExists',
+					args: [poolId],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'surveyExists',
+					args: ['s1'],
+				}),
+			).toEqual(false);
+		});
 	});
 
 	describe('updateSurvey', function () {
@@ -358,6 +401,108 @@ describe('S3ntimentSurveyStore', function () {
 					args: ['nope'],
 				}),
 			).toEqual([]);
+		});
+	});
+
+	describe('multi-pool ordering invariants (getSafePools / getPoolBatches)', function () {
+		it('orders getSafePools per safe in creation order and isolates pools by safe', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safeA = unnamedAccounts[0];
+			const safeB = unnamedAccounts[1];
+
+			// Interleave pool creation across the two safes.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['a1', 'p-a-1', 'QmCidA', []],
+				account: safeA,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['b1', 'p-b-1', 'QmCidB', []],
+				account: safeB,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['a2', 'p-a-2', 'QmCidA2', []],
+				account: safeA,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['b2', 'p-b-2', 'QmCidB2', []],
+				account: safeB,
+			});
+
+			// safePools preserves creation order per safe.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getSafePools',
+					args: [safeA],
+				}),
+			).toEqual(['p-a-1', 'p-a-2']);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getSafePools',
+					args: [safeB],
+				}),
+			).toEqual(['p-b-1', 'p-b-2']);
+
+			// Each safe's pool list is fully isolated from the other safe's.
+			const safeBList = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getSafePools',
+				args: [safeB],
+			});
+			expect(safeBList.includes('p-a-1')).toEqual(false);
+			expect(safeBList.includes('p-a-2')).toEqual(false);
+		});
+
+		it('aggregates getPoolBatches in push order across bootstrap and registerBatch', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolA = 'pool-order-a';
+			const poolB = 'pool-order-b';
+			const b1 = '0x' + '11'.repeat(20);
+			const b2 = '0x' + '22'.repeat(20);
+			const b3 = '0x' + '33'.repeat(20);
+			const b4 = '0x' + '44'.repeat(20);
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['a1', poolA, 'QmCidA', [b1, b2]],
+				account: safe,
+			});
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['b1', poolB, 'QmCidB', [b4]],
+				account: safe,
+			});
+			// A later print run appends to pool A via registerBatch.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'registerBatch',
+				args: [poolA, b3],
+				account: safe,
+			});
+
+			// Bootstrap order first, then registerBatch order.
+			expect(
+				(
+					await env.read(S3ntimentSurveyStore, {
+						functionName: 'getPoolBatches',
+						args: [poolA],
+					})
+				).map((b) => b.toLowerCase()),
+			).toEqual([b1.toLowerCase(), b2.toLowerCase(), b3.toLowerCase()]);
+
+			// Per-pool isolation: pool B only has its own batch.
+			expect(
+				(
+					await env.read(S3ntimentSurveyStore, {
+						functionName: 'getPoolBatches',
+						args: [poolB],
+					})
+				).map((b) => b.toLowerCase()),
+			).toEqual([b4.toLowerCase()]);
 		});
 	});
 
@@ -861,6 +1006,101 @@ describe('S3ntimentSurveyStore', function () {
 					'card-v',
 					batchAddress,
 					badVSignature,
+				]),
+			).toBeRejectedWith(
+				`VM Exception while processing transaction: reverted with reason string 'Invalid signature recovery value'`,
+			);
+		});
+
+		it('accepts signatures whose raw v is 0 or 1 (adjusted to 27/28) and recovers the batch wallet', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWallet = unnamedAccounts[3];
+			const secondWallet = unnamedAccounts[4];
+			const poolId = 'pool-reg-lowv';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+
+			// _recoverSigner: `if (v < 27) v += 27` lifts a raw v of 0 → 27 and
+			// 1 → 28, recovering the SAME signer as the canonical 27/28 path. Mutate
+			// the trailing v byte of each card to its raw low value (v - 27).
+			// card-lowv-0 naturally signs with v=27 (→ low 0) and card-lowv-1 with
+			// v=28 (→ low 1), deterministically covering both low-v edges.
+			const nullifiers = ['card-lowv-0', 'card-lowv-1'];
+			const members = [poolWallet, secondWallet];
+			const lowVs = new Set<number>();
+			for (let i = 0; i < members.length; i++) {
+				const sig = await signCardMessage(batchWallet, nullifiers[i], batchAddress);
+				const v = parseInt(sig.slice(-2), 16); // canonical v: 27 or 28
+				const lowV = v - 27; // 0 or 1
+				lowVs.add(lowV);
+				const lowVSignature = (sig.slice(0, -2) + lowV.toString(16).padStart(2, '0')) as `0x${string}`;
+
+				const mockSmc = await viem.deployContract('MockSMC', [members[i]]);
+				await mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					nullifiers[i],
+					batchAddress,
+					lowVSignature,
+				]);
+			}
+
+			// Both low-v values (0 and 1) were exercised, each recovering the batch wallet.
+			expect([...lowVs].sort()).toEqual([0, 1]);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, poolWallet],
+				}),
+			).toEqual(true);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, secondWallet],
+				}),
+			).toEqual(true);
+			const batchData = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getBatch',
+				args: [poolId, batchAddress],
+			});
+			expect(batchData[1]).toEqual(2n);
+		});
+
+		it('reverts when the raw v byte is 26 (adjusted to 53, not 27 — so recovery is refused)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolWallet = unnamedAccounts[3];
+			const poolId = 'pool-reg-v26';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+
+			const signature = await signCardMessage(batchWallet, 'card-v26', batchAddress);
+			// v = 0x1a = 26. The coverage audit's premise was "v=26 → 27 valid", but per
+			// the source `if (v < 27) v += 27` maps 26 → 53, which fails
+			// `require(v == 27 || v == 28)`. This test pins the REAL behaviour: revert.
+			const v26Signature = (signature.slice(0, -2) + '1a') as `0x${string}`;
+
+			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
+			await expect(
+				mockSmc.write.register([
+					S3ntimentSurveyStore.address,
+					poolId,
+					'card-v26',
+					batchAddress,
+					v26Signature,
 				]),
 			).toBeRejectedWith(
 				`VM Exception while processing transaction: reverted with reason string 'Invalid signature recovery value'`,
