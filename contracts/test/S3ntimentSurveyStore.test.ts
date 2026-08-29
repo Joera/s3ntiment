@@ -235,7 +235,7 @@ describe('S3ntimentSurveyStore', function () {
 			).toBeRejectedWith(`custom error 'NotPoolSafe()'`);
 		});
 
-		it('ignores batchIds when adding a survey to an existing pool', async function () {
+		it('reverts when batchIds are passed to an existing pool (InvalidBatchIds)', async function () {
 			const {env, S3ntimentSurveyStore, unnamedAccounts} =
 				await networkHelpers.loadFixture(deployAll);
 			const safe = unnamedAccounts[0];
@@ -247,25 +247,68 @@ describe('S3ntimentSurveyStore', function () {
 				args: ['s1', poolId, 'QmCid1', []],
 				account: safe,
 			});
-			// A batch passed to a later createSurvey on an existing pool is ignored.
-			await env.execute(S3ntimentSurveyStore, {
-				functionName: 'createSurvey',
-				args: ['s2', poolId, 'QmCid2', [batch]],
-				account: safe,
-			});
+			// Audit #9: a non-empty batchIds array on an EXISTING pool is a caller
+			// mistake — it must revert explicitly, not be silently dropped (cards
+			// would later revert BatchNotFound at redemption).
+			await expect(
+				env.execute(S3ntimentSurveyStore, {
+					functionName: 'createSurvey',
+					args: ['s2', poolId, 'QmCid2', [batch]],
+					account: safe,
+				}),
+			).toBeRejectedWith(`custom error 'InvalidBatchIds()'`);
 
+			// The whole tx reverted: the survey was NOT added...
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'surveyExists',
+					args: ['s2'],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveys',
+					args: [poolId],
+				}),
+			).toEqual(['s1']);
+			// ...and no batch was registered.
 			await expect(
 				env.read(S3ntimentSurveyStore, {
 					functionName: 'getBatch',
 					args: [poolId, batch],
 				}),
 			).toBeRejectedWith(`custom error 'BatchNotFound()'`);
-
 			const poolBatches = await env.read(S3ntimentSurveyStore, {
 				functionName: 'getPoolBatches',
 				args: [poolId],
 			});
 			expect(poolBatches).toEqual([]);
+		});
+
+		it('still lets the Safe add a survey to an existing pool with an empty batchIds array', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-ignore-batch-empty';
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', []],
+				account: safe,
+			});
+			// An EMPTY batchIds array on an existing pool stays valid (no-op guard).
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s2', poolId, 'QmCid2', []],
+				account: safe,
+			});
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveys',
+					args: [poolId],
+				}),
+			).toEqual(['s1', 's2']);
 		});
 
 		it('reverts during createSurvey bootstrap for a zero-address batch (InvalidBatchId)', async function () {

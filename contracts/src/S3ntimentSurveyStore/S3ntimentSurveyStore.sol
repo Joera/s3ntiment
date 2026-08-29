@@ -119,6 +119,7 @@ contract S3ntimentSurveyStore {
     error BatchAlreadyRegistered();
     error BatchRevoked();
     error BatchMaxCardsReached();
+    error InvalidBatchIds();
     error InvalidBatchId();
     error InvalidMemberAddress();
     error NullifierAlreadyUsed();
@@ -158,12 +159,16 @@ contract S3ntimentSurveyStore {
      *
      *      Existing pool:
      *        - msg.sender must be the pool's Safe
-     *        - batchIds are ignored (use registerBatch() for new print runs)
+     *        - batchIds must be empty — a non-empty array reverts with
+     *          InvalidBatchIds (batch registration on an existing pool only
+     *          happens via registerBatch(), never through createSurvey)
      *
      * @param surveyId  Unique identifier, generated client-side
      * @param poolId    Pool this survey belongs to (created if new)
      * @param ipfsCid   IPFS content identifier for survey metadata
-     * @param batchIds  Batch wallet addresses — only used when bootstrapping a new pool
+     * @param batchIds  Batch wallet addresses — honored ONLY when bootstrapping a
+     *                  new pool; reverts with InvalidBatchIds if passed non-empty
+     *                  on an existing pool
      */
     function createSurvey(
         string memory surveyId,
@@ -188,6 +193,11 @@ contract S3ntimentSurveyStore {
         } else {
             // Existing pool — caller must be the pool's Safe (shared choke-point).
             _requirePoolSafe(poolId);
+            // Audit #9: batch registration has no path through createSurvey on an
+            // existing pool — silently dropping the array is a footgun (cards would
+            // later revert BatchNotFound at redemption). A non-empty array is always
+            // a caller mistake and must revert explicitly, not be ignored.
+            if (batchIds.length > 0) revert InvalidBatchIds();
             _recordSurvey(surveyId, poolId, ipfsCid);
         }
     }
