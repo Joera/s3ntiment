@@ -1,135 +1,48 @@
-# card-v2 — per-pool nullifier binding, chain/contract binding, zero-owner guard
+# S3ntimentSurveyStore — Audit #4 (batch revocation) + #8 (updateSurvey CID guard)
 
-Implements audit findings **#1**, **#6**, and **#7** from the s3ntiment card
-format review: a BREAKING change to the card **(nullifier, batchId, signature)**
-message format. Scope is limited to exactly these three findings.
+Branch: `deepseek/revoke-batch` (worktree `~/code/worktrees/s3ntiment-revoke-batch`, based on `origin/main` @ `a197684bc`).
+PR: https://github.com/Joera/s3ntiment/pull/20
 
-## Branch
-`deepseek/card-v2` (based on `origin/main` @ `e18a8374c`)
+## What changed
 
-## Commit
-(see final commit hash reported alongside)
+### `contracts/src/S3ntimentSurveyStore/S3ntimentSurveyStore.sol`
+Scope is exactly the two external-audit findings (#4, #8); nothing else was touched.
 
-## PR
-opened against `origin/main` (PR number reported alongside).
+**#4 — Batch revocation + optional per-batch card cap**
+- `struct Batch` gains two storage-layout-compatible fields **appended at the end**: `bool revoked` and `uint256 maxCards` (0 = unlimited). Existing fields (`createdAt`, `cardCount`) were not reordered.
+- New errors: `BatchRevoked()`, `BatchMaxCardsReached()`.
+- New `revokeBatch(string memory poolId, address batchId) external` — Safe-gated **exclusively** through the existing `_requirePoolSafe(poolId)` choke-point (the single authority path; no new authority check/modifier added). Reverts `BatchNotFound()` for a never-registered batch; double-revoke is an **idempotent no-op**, consistent with the existing `revokeMember` precedent.
+- New `setBatchMaxCards(string memory poolId, address batchId, uint256 maxCards) external` — Safe-gated through `_requirePoolSafe`, 0 clears the cap. Included because it did not complicate the ABI path (registerInPool's batchIds-array ABI is unchanged).
+- `registerInPool` — immediately after the existing `BatchNotFound` check (and **before any nullifier/signature work**):
+  - `if (batch.revoked) revert BatchRevoked();`
+  - `if (batch.maxCards != 0 && batch.cardCount >= batch.maxCards) revert BatchMaxCardsReached();`
+  - so a revoked or over-cap batch can never burn a nullifier or write membership.
+- `_registerBatch` initializes the two new fields (`revoked: false`, `maxCards: 0`).
 
----
+**#8 — updateSurvey empty-CID guard**
+- `updateSurvey` now requires a non-empty `newIpfsCid`, reusing `createSurvey`'s existing guard `require(bytes(newIpfsCid).length > 0, "IPFS CID cannot be empty")`. Zero ABI change; a Safe can no longer blank a survey's metadata via a successful tx.
 
-## The three findings
+**ABI / invariants**
+- No breaking change to any existing external function signature; the two new functions (`revokeBatch`, `setBatchMaxCards`) are additive only. `getBatch` signature unchanged.
+- All new authority routed through the existing `_requirePoolSafe` choke-point.
+- No deferred items introduced (no events, no chain-binding changes, no Safe rotation, no pagination, no claim signatures).
+- Contract header/design-doc comment updated only where the change affects it (the choke-point Safe-gated write list).
 
-- **#1 — bind pool into the card message + scope the nullifier per pool.**
-  The old digest `keccak256(abi.encodePacked(nullifier, "|", batchId))` ignored
-  the pool, so a card could theoretically be redeemed in any pool that registered
-  the same batch wallet, and nullifiers were global. The new digest is
-  `keccak256(abi.encode(poolId, nullifier, batchId, address(this), block.chainid))`.
-  `abi.encode` (NOT `encodePacked`) is required because `poolId` and `nullifier`
-  are both dynamic — packed concatenation is no longer collision-safe with two
-  dynamic fields. Storage is now `mapping(string => mapping(bytes32 => bool))
-  usedNullifiers` keyed `[poolId][messageHash]`.
-- **#6 — chain + contract binding.** Covered by `address(this)` + `block.chainid`
-  in the digest: a card is only valid for the specific survey-store deployment on
-  the specific chain it was printed for. A card signed for a deployment on base
-  cannot be replayed on the same deployment of another chain.
-- **#7 — reject a zero-address SMC owner.** In `registerInPool`, after
-  `poolWallet = ISMC(msg.sender).owner()`, the contract now reverts
-  `InvalidMemberAddress()` when `poolWallet == address(0)`, BEFORE writing
-  membership. Because the tx reverts, the earlier nullifier burn + cardCount
-  increment are rolled back, so a malicious SMC cannot (a) write a bogus
-  `poolMembers[poolId][address(0)] = true` entry, nor (b) consume a real card.
+### `contracts/test/S3ntimentSurveyStore.test.ts`
+Mirrors the existing test style. Added:
+- `updateSurvey`: empty CID reverts (`IPFS CID cannot be empty`) and leaves the original CID untouched.
+- `revokeBatch` (Safe-gated governance): non-Safe → `NotPoolSafe`; unknown pool → `PoolNotFound`; never-registered batch → `BatchNotFound`; successful revoke then subsequent `registerInPool` reverts `BatchRevoked` **and does not burn the nullifier** (assert `isNullifierUsed` is still `false`); cross-pool scoping intact (same batch address revoked in pool A does not affect pool B); double-revoke idempotent no-op.
+- `setBatchMaxCards` (per-batch cap): registering cards up to the cap succeeds, one past the cap reverts `BatchMaxCardsReached` (and does not burn the nullifier); non-Safe → `NotPoolSafe`; never-registered batch → `BatchNotFound`.
 
-## ABI / breaking changes
+## Gate
 
-- `isNullifierUsed(string poolId, string nullifier, address batchId)` — the
-  external read gains a `string poolId` parameter.
-- `registerInPool` — unchanged external signature; behaviour now validates the
-  new per-pool/contract/chain-bound digest.
-- New custom error `InvalidMemberAddress()` added to the ABI.
-- All frontend/shared callers of the read + the signing API were updated
-  (grep-verified — no stale 2-arg `signCardMessage` or 2-arg `isNullifierUsed`
-  callers remain in source).
+Exact command (from `contracts/`):
+```
+pnpm test
+```
+(= `hardhat test`; the repo's contracts test command.)
 
-## Off-chain encoding (byte-identical, single source of truth)
+Result: **60 passing (60 nodejs)** — the runner's own collected count. Green from the committed worktree state.
 
-- `shared/src/shared/invites/encoding.ts` — rewritten around
-  `CardMessageContext { poolId, storeAddress, chainId: bigint }`. New
-  `cardMessageHash(context, nullifier, batchId)` returns
-  `keccak256(encodeAbiParameters(parseAbiParameters('string,string,address,address,uint256'), [poolId, nullifier, batchId, storeAddress, chainId]))`
-  — identical to the on-chain `abi.encode` in the contract. `signCardMessage`
-  now takes the context.
-- `shared/src/shared/invites/card.factory.ts` / `types.ts` — `CardData` gains
-  `poolId?`; `parseCardURL` recovers `surveyOwner` only when given a context
-  (without it the digest cannot be reconstructed, so owner recovery is skipped);
-  `Card.isUsed` reads `isNullifierUsed([poolId, nullifier, batchId])`.
-- `frontend-organiser/src/factories/invitation.factory.ts` —
-  `generateCardSecrets(batchAccount, batch, storeAddress, chainId)` signs cards
-  bound to the batch's pool; `survey.factory.ts` passes
-  `(surveyStore.address, BigInt(base.id))`.
-- The seam is pinned both ways: the contracts seam computes the digest from the
-  deployed contract's `address(this)` + `block.chainid` and verifies a card
-  signed by the shared off-chain encoder succeeds in `registerInPool`
-  (`encoding.seam.test.ts`, on-chain oracle round-trip).
-
-## Tests
-
-- `contracts/test/encoding.seam.test.ts` — recomputed the regression canary
-  digest with the new bindings and pinned the `abi.encode` form, per-pool /
-  per-contract / per-chain scoping, the EIP-191 ethSigned wrapper, the
-  recover round-trip, the on-chain `registerInPool` oracle path, and
-  wrong-signer rejection.
-- `contracts/test/S3ntimentSurveyStore.test.ts` — every `signCardMessage` /
-  `isNullifierUsed` call site updated to the new context/ABI, plus new
-  regressions:
-  - (a) **cross-pool redemption fails** — a card signed for pool A cannot be
-    redeemed in pool B (`InvalidSignature`), and the intended pool-A redemption
-    still succeeds afterwards.
-  - (b) **per-pool nullifier independence** — the same `(nullifier, batchId)`
-    burned in pool A is still redeemable in pool B (same batch registered in both).
-  - (c) **zero-address owner** — a malicious SMC returning `address(0)` reverts
-    `InvalidMemberAddress()`, and the nullifier is NOT burned (rollback).
-  - (d) the pre-existing happy path and error matrix stay green.
-- Frontend/shared suites updated to the new API + context:
-  `shared` (86), `frontend-organiser` (28), `frontend-respondents` (107).
-  Respondent real code (`router.gates.ts`) now resolves the pool via
-  `fetchSurvey` before the per-pool `isUsed` check; `auth-ctrlr.ts` already
-  resolves the pool before `register`.
-- `contracts/deployments/base/S3ntimentSurveyStore.json` ABI refreshed to match
-  the compiled source (`pnpm check:abi` green) so frontends import the updated
-  `isNullifierUsed` signature.
-
-## Gates
-
-- `cd contracts && pnpm exec hardhat test` — **50 passing** (baseline was 46;
-  +4: three new regressions + one additional seam canary test).
-- `pnpm --filter @s3ntiment/shared test` — 86 passing.
-- `pnpm --filter @s3ntiment/frontend-organiser test` — 28 passing.
-- `pnpm --filter frontend-respondents test` — 107 passing.
-- `pnpm check:abi` (contracts) — green.
-
-## Known wrinkle (respondent root gate)
-
-A card URL carries only the surveyId (not the pool), and the respondent does not
-know the pool at `parseCardURL` time (chicken-and-egg). `parseCardURL`'s context
-is therefore optional: without a context it returns the card with `surveyOwner`
-unset rather than failing. The respondent root gate resolves the pool via
-`fetchSurvey(cardData.surveyId)` before the per-pool `isUsed` read; if the pool
-cannot be resolved it proceeds conservatively (usage is re-checked later in the
-flow). This is documented here as an accepted limitation of the current flow.
-
-## Files changed (16)
-
-- `contracts/src/S3ntimentSurveyStore/S3ntimentSurveyStore.sol`
-- `contracts/test/S3ntimentSurveyStore.test.ts`
-- `contracts/test/encoding.seam.test.ts`
-- `contracts/deployments/base/S3ntimentSurveyStore.json`
-- `shared/src/shared/invites/encoding.ts`
-- `shared/src/shared/invites/card.factory.ts`
-- `shared/src/shared/invites/types.ts`
-- `frontend-organiser/src/factories/invitation.factory.ts`
-- `frontend-organiser/src/factories/invitation.factory.test.ts`
-- `frontend-organiser/src/factories/survey.factory.ts`
-- `frontend-organiser/src/factories/survey.factory.test.ts`
-- `frontend-respondents/src/router.gates.ts`
-- `frontend-respondents/src/router-entry-gates.test.ts`
-- `frontend-respondents/src/card-signature.seam.test.ts`
-- `frontend-respondents/src/card-url.round-trip.test.ts`
-- `frontend-respondents/src/card-class.seam.test.ts`
+Committed HEAD (code change commit): `d19f9cd0d93e07d04ca549fa61ea615379254d0d`
+Branch tip (after this report commit): see `git log -1`.
