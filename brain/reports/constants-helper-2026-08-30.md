@@ -4,7 +4,7 @@
 **Branch:** `deepseek/constants-helper`
 **Repo:** `github.com/Joera/s3ntiment`
 **Type:** implement (code-only; no deploy / no on-chain tx)
-**Reflects commit:** `<FILL_AT_COMMIT>`
+**Reflects commit:** `88339d6` (branch `deepseek/constants-helper`)
 
 ## Result
 Added a thin, typed, per-network constants module in the contracts package
@@ -58,7 +58,7 @@ source of truth).
 
 ## PR
 Title: `feat(contracts): per-network constants helper for S3ntimentSurveyStore`
-PR URL: `<FILL_AT_PR>`
+PR URL: `https://github.com/Joera/s3ntiment/pull/23`
 
 ## Notes / caveats
 - No live deploy, verification, or on-chain transaction was performed (code-only).
