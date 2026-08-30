@@ -9,7 +9,7 @@ import '../components/survey-forms/pool-form-batches.js';
 import '../components/registered-questions-editor.js';
 import { router } from "../router.js";
 import { createBatch } from "../factories/survey.factory.js";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import {  fetchAndDecryptSurveyWithOwner, Pool, Survey } from "@s3ntiment/shared";
 import { renderIcon } from "@s3ntiment/shared/assets";
 import '@s3ntiment/shared/components';

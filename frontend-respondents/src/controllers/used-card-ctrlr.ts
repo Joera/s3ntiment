@@ -2,7 +2,7 @@ import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 
 import { router } from '../router.js';
 import { ensureBootstrapKey } from '../bootstrap.factory.js';

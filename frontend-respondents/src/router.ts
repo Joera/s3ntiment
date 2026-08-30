@@ -10,7 +10,7 @@ import { parseCardURL } from '@s3ntiment/shared'
 import { base } from 'viem/chains';
 import { InvalidCardController } from './controllers/invalid-card-ctrlr.js';
 import { UsedCardController } from './controllers/used-card-ctrlr.js';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { removeSplash } from './onpageload.js';
 import { AuthController } from './controllers/auth-ctrlr.js';
 import { CompletedController } from './controllers/completed-ctrlr.js';

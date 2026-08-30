@@ -14,7 +14,7 @@ import { authenticate, hasParticipatingAccount } from './humanWallet.factory.js'
 import type { IServices } from './services.js';
 // Committed deployment JSON — resolved via the s3ntiment-contracts workspace
 // exports map (./deployments/*) so tests read the real address/abi.
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 
 const POOL_ID = '0x0000000000000000000000000000000000000001';
 const SIGNER = '0x00000000000000000000000000000000000000ab';

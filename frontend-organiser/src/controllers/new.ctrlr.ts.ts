@@ -5,7 +5,7 @@ import { Batch, Survey } from '@s3ntiment/shared';
 import '../components/draft-survey-editor.js';
 import { createBatch } from '../factories/survey.factory.js';
 import { IServices } from '../services/services.js';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { store } from '../state/store.js';
 import { router } from '../router.js';
 

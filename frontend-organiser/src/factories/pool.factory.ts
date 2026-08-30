@@ -1,6 +1,6 @@
 import { Batch, Pool } from "@s3ntiment/shared";
 import { IServices } from "../services/services";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 
 export const getPoolInfo = async (services:IServices, poolId: string) : Promise<Pool> => {
 

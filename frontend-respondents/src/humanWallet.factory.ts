@@ -1,6 +1,6 @@
 import { base } from "viem/chains";
 import { IServices } from "./services"
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { fetchSurvey } from "../../shared/src/shared";
 
 // Human-wallet identity flow — EXTRACTED (Task 1a of RFC-deferred-identity-persistence).

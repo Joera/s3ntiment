@@ -8,6 +8,7 @@
 		"./artifacts/*": "./dist/generated/artifacts/*",
 		"./abis/*": "./dist/generated/abis/*",
 		"./deployments/*": "./deployments/*",
+		"./constants": "./src/constants.ts",
 		"./src/*": "./src/*"
 	},
 	"files": [

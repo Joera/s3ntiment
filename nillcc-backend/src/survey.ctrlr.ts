@@ -1,5 +1,5 @@
 import { createSurveyAggregationQuery, createSurveyCollectionSchema, EncryptedConfig, fetchSurveyAndParseCid, isScored, PoolConfig, withRetry } from "@s3ntiment/shared";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { calculateScore, stripScoring } from "@s3ntiment/shared";
 import { NillionPkpClient } from "./services/nildb.pkp.service.js";
 
