@@ -188,30 +188,31 @@ export class NillDBUserService {
      * two-client delete+recreate). Unlike getUserSurveyAnswers (which returns only
      * the first record's data and drops the document id), this preserves the ids
      * needed to delete each original after the new leaf owns a copy.
+     *
+     * SAFETY: this method THROWS on a listing failure instead of swallowing the
+     * error as an empty result — the /account migration must distinguish a genuine
+     * "no records" from a transient nilDB/network error, otherwise a false-empty
+     * would let the flow wipe bootstrapE and set anchor_address while real answers
+     * stay stranded under the wiped key (see BLOCKING-2 in the PR #26 review).
      */
     async listOwnedBySurvey(surveyId: string): Promise<Array<{ documentId: string; data: any }>> {
-        try {
-            const dataRefs = await this.user.listDataReferences();
+        const dataRefs = await this.user.listDataReferences();
 
-            const surveyDataRefs: any[] = dataRefs.data.filter((ref: any) =>
-                ref.collection === surveyId
-            );
+        const surveyDataRefs: any[] = dataRefs.data.filter((ref: any) =>
+            ref.collection === surveyId
+        );
 
-            const records: Array<{ documentId: string; data: any }> = [];
+        const records: Array<{ documentId: string; data: any }> = [];
 
-            for (const ref of surveyDataRefs) {
-                const surveyData = await this.user.readData({
-                    collection: surveyId,
-                    document: ref.document,
-                });
-                records.push({ documentId: ref.document, data: surveyData.data });
-            }
-
-            return records;
-        } catch (error) {
-            console.error('Error listing owned survey data:', error);
-            return [];
+        for (const ref of surveyDataRefs) {
+            const surveyData = await this.user.readData({
+                collection: surveyId,
+                document: ref.document,
+            });
+            records.push({ documentId: ref.document, data: surveyData.data });
         }
+
+        return records;
     }
 
     /**

@@ -128,9 +128,9 @@ export class AccountController {
         this.statusMessage =
           result.ok
             ? 'Your stealth account is secured. Your keys for this pool now live with your human wallet — you can recover them on a new device.'
-            : `We couldn't complete securing your account (${result.reason ?? 'unknown'}). Nothing was wiped — your existing access is unchanged. Please try again.`;
+            : this.failureCopy(result.reason);
       } catch (e: any) {
-        this.statusMessage = `We couldn't complete securing your account (${e?.message ?? e}). Nothing was wiped — your existing access is unchanged.`;
+        this.statusMessage = this.failureCopy(e?.message ?? e);
       } finally {
         btn.disabled = false;
         btn.textContent = 'Secure';
@@ -139,22 +139,35 @@ export class AccountController {
     });
   }
 
+  // Failure copy is deliberately conservative: it reports that the existing
+  // on-device key was kept, that nothing was wiped/replaced and that no recovery
+  // anchor was set — but it does NOT claim 'nothing could be at risk' (the nilDB
+  // records may already have been re-created under S, so we make no promise that
+  // nothing changed).
+  private failureCopy(reason?: string): string {
+    return `We couldn't complete securing your account (${reason ?? 'unknown'}). We kept your device's existing key and set no recovery anchor — nothing was wiped or replaced. Please try again.`;
+  }
+
   /**
    * Secure (or recover) via the email + human-wallet option.
    *
-   * Steps (each additive, matching repo patterns):
+   * CANONICAL order (safety-first — the nilDB record move completes while the old
+   * leaf E is STILL the on-chain member + signer, so a migration failure leaves E
+   * untouched on-chain with its records intact):
    *  1. Capture the acting bootstrap leaf `oldLeaf` (current SMC owner).
    *  2. Derive S via the refactored humanWallet factory (WaaP + OPRF) — returns the
    *     derived S key (persisted later) and swaps the signer to S internally.
-   *  3. Re-establish the bootstrap leaf as signer so the rotateMember write is sent
-   *     from the SMC whose owner is the old leaf, signed by the old leaf (EIP-191
-   *     digest bound to poolId/oldLeaf/newLeaf/store/chain — see rotate-member.
-   *     signing.ts). Call contract `rotateMember(poolId, S, signature)` through the
-   *     funded Pimlico smart-account write path (RFC §7.3 second tx, paymaster-paid).
-   *  4. Swap the signer to S (nilDB + SMC owner now resolve to S).
-   *  5. Migrate the old leaf's nilDB records E -> S (two-client delete+recreate).
-   *     FAIL-SAFE: if this errors, KEEP E — do NOT wipe, do NOT set anchor.
-   *  6. Wipe bootstrapE, persist the derived S key, set the anchor_address flag.
+   *  3. nilDB E->S MIGRATION FIRST (recreate under S, confirm, THEN delete under E)
+   *     while E is still a member. On ANY migration failure -> KEEP E, no wipe, no
+   *     anchor (never orphan the answer).
+   *  4. On-chain `rotateMember(poolId, S, sigByOldLeaf)` via the funded Pimlico
+   *     smart-account write path (RFC §7.3 second tx, paymaster-paid). E is
+   *     re-established as signer so the SMC owner is the old leaf when sent; the
+   *     EIP-191 digest (poolId/oldLeaf/newLeaf/store/chain) is signed by E. Only
+   *     on success does membership atomically move E -> S.
+   *  5. Swap the active signer to S (nilDB + SMC owner now resolve to S).
+   *  6. ONLY on FULL success (migration AND rotate): wipe E (clearBootstrapKey),
+   *     persist the derived S key, set the anchor_address flag.
    */
   async secureWithEmailWallet(email: string, poolId: string): Promise<SecureResult> {
     // 1) Acting bootstrap leaf (E / E2) — the current SMC owner at entry.
@@ -169,8 +182,21 @@ export class AccountController {
     const sKey = derived.key;
     const sAddress = derived.address;
     const surveyId = store.activeSurvey?.id;
+    if (!surveyId) {
+      // With no active survey we cannot confirm the record move; refuse to proceed.
+      return { ok: false, reason: 'no_active_survey' };
+    }
 
-    // 3) Re-establish the old leaf to authorise + send the atomic E->S rotate.
+    // 3) nilDB E->S migration FIRST, while E is still the on-chain member/signer.
+    //    FAIL-SAFE: any migration failure (including a list error) keeps E, sets no
+    //    anchor and makes no on-chain change.
+    const migration = await this.migrateRecordsToDerivedLeaf(poolId, surveyId, sKey);
+    if (!migration.ok) {
+      return { ok: false, reason: migration.reason };
+    }
+
+    // 4) On-chain E->S rotate, signed by the OLD leaf. Re-establish E so the SMC
+    //    owner is E when the rotateMember write is sent.
     await this.services.account.updateSignerWithKey(bootstrapKey);
     const signer = this.services.account.getSigner() as {
       sign: (args: { hash: `0x${string}` }) => Promise<`0x${string}`>;
@@ -191,22 +217,11 @@ export class AccountController {
       return { ok: false, reason: 'rotate_reverted' };
     }
 
-    // 4) Swap signer to S — SMC owner + nilDB owner now resolve to S.
+    // 5) Swap signer to S — the durable on-device identity.
     await this.services.account.updateSignerWithKey(sKey);
 
-    // 5) Migrate old-leaf records E -> S (delete under E, recreate under S).
-    //    FAIL-SAFE: with no active survey we cannot confirm the record move, so we
-    //    refuse to wipe E / set an anchor — we never orphan the answer.
-    if (!surveyId) {
-      return { ok: false, reason: 'no_active_survey' };
-    }
-    const migration = await this.migrateRecordsToDerivedLeaf(poolId, surveyId, sKey);
-    // FAIL-SAFE: keep E — never wipe / never anchor on a failed migration.
-    if (!migration.ok) {
-      return { ok: false, reason: migration.reason };
-    }
-
-    // 6) Wipe E, persist S + anchor — ONLY reached on full success.
+    // 6) Wipe E, persist S + anchor — ONLY reached on full (migration AND rotate)
+    //    success.
     clearBootstrapKey();
     saveDerivedSKeyFromStorage(sKey);
     saveAnchorAddressFromStorage(email);
@@ -218,10 +233,20 @@ export class AccountController {
    * Cross-leaf nilDB record migration (E -> S) via two-client delete+recreate
    * (RFC §6 / §11 delete+recreate ownership move — no ACL wrapper exists in the
    * repo, so the record is re-created under the new leaf's owner did:key and the
-   * old leaf's copy is deleted). One shared NillDBUserService is re-init'd
+   * old leaf's copy is then deleted). One shared NillDBUserService is re-init'd
    * sequentially per leaf via `account.updateSignerWithKey` + `createNillDBSeed`
-   * (the seed is a deterministic function of the acting leaf). Returns { ok:false }
-   * on ANY error so the caller keeps the old leaf (fail-safe).
+   * (the seed is a deterministic function of the acting leaf).
+   *
+   * SAFETY (BLOCKING-1/2 fixes):
+   *  - RECREATE FIRST, then DELETE: E's copies are only removed AFTER S owns the
+   *    records, so a recreate failure/crash never orphans the answer — it leaves E
+   *    with its records intact. A failed delete after a successful recreate leaves
+   *    a harmless duplicate in E (never an orphan) and the secure flow may proceed.
+   *  - A listing error is NOT treated as empty: `listOwnedBySurvey` throws on a
+   *    listing failure, so a transient nilDB error aborts the migration
+   *    ({ ok:false }, distinct 'migration_list_failed') instead of a silent [] that
+   *    would let the flow wipe E / set an anchor while real answers stay stranded.
+   * Returns { ok:false } on ANY error so the caller keeps the old leaf (fail-safe).
    */
   private async migrateRecordsToDerivedLeaf(
     poolId: string,
@@ -232,31 +257,29 @@ export class AccountController {
       const bootstrapKey = loadBootstrapKeyFromStorage();
       if (!bootstrapKey) return { ok: false, reason: 'no_bootstrap_key' };
 
-      // --- read + delete the old leaf's records (init under E) ---
+      // --- enumerate E's records (init under E). A listing error THROWS and is
+      // surfaced as a distinct 'migration_list_failed' — never a silent []. ---
       await this.services.account.updateSignerWithKey(bootstrapKey);
       const seedE = await this.services.account.createNillDBSeed();
       await this.services.nillDB.init(seedE);
-      const records = await this.services.nillDB.listOwnedBySurvey(surveyId);
-
-      for (const record of records) {
-        const del = await this.services.nillDB.deleteOwnedData(
-          surveyId,
-          record.documentId,
-          [record.data],
-        );
-        if (!del.ok) return { ok: false, reason: 'migration_delete_failed' };
+      let records: Array<{ documentId: string; data: any }>;
+      try {
+        records = await this.services.nillDB.listOwnedBySurvey(surveyId);
+      } catch (e) {
+        return { ok: false, reason: 'migration_list_failed' };
       }
 
-      // --- recreate under S (init under S) --- ALWAYS ends with S as the active
-      // signer so the account resolves to S even when there were 0 records to move.
+      if (records.length === 0) {
+        // Genuinely no E records to move. Ensure the signer resolves to S for the
+        // rest of the flow (step 4 re-establishes E only for signing the rotate).
+        await this.services.account.updateSignerWithKey(sKey);
+        return { ok: true };
+      }
+
+      // --- 1) RECREATE under S FIRST (init under S) ---
       await this.services.account.updateSignerWithKey(sKey);
       const seedS = await this.services.account.createNillDBSeed();
       await this.services.nillDB.init(seedS);
-
-      if (records.length === 0) {
-        // No old-leaf records to move; nothing further to do under S.
-        return { ok: true };
-      }
 
       const survey = store.activeSurvey as any;
       const poolConfig = survey?.config;
@@ -275,6 +298,22 @@ export class AccountController {
         );
       }
 
+      // --- 2) DELETE E's copies, ONLY after every recreate succeeded. ---
+      await this.services.account.updateSignerWithKey(bootstrapKey);
+      await this.services.nillDB.init(seedE);
+      for (const record of records) {
+        const del = await this.services.nillDB.deleteOwnedData(
+          surveyId,
+          record.documentId,
+          [record.data],
+        );
+        if (!del.ok) {
+          // Harmless duplicate left in E (never an orphan) — proceed, ending on S.
+          await this.services.account.updateSignerWithKey(sKey);
+          return { ok: true, reason: 'migration_delete_duplicate_left' };
+        }
+      }
+      await this.services.account.updateSignerWithKey(sKey);
       return { ok: true };
     } catch (e: any) {
       console.error('nilDB E->S migration failed (keeping old leaf):', e);
