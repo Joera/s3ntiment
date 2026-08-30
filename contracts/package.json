@@ -8,7 +8,10 @@
 		"./artifacts/*": "./dist/generated/artifacts/*",
 		"./abis/*": "./dist/generated/abis/*",
 		"./deployments/*": "./deployments/*",
-		"./constants": "./src/constants.ts",
+		"./constants": {
+			"types": "./dist/constants.d.ts",
+			"import": "./dist/constants.js"
+		},
 		"./src/*": "./src/*"
 	},
 	"files": [
@@ -66,6 +69,8 @@
 		"deploy:watch": "wait-on ./generated && ldenv -m localhost pnpm as-soon -w generated -w deploy pnpm run deploy:dev @@MODE @@",
 		"test": "hardhat test",
 		"test:watch": "wait-on ./generated && as-soon -w generated -w test hardhat test --no-compile",
+		"build:constants": "tsc -p tsconfig.constants.json",
+		"check:constants": "pnpm build:constants && node scripts/check-constants.mjs",
 		"typescript:watch": "as-soon -w js pnpm typescript",
 		"format:check": "prettier --check .",
 		"format": "prettier --write .",
@@ -76,7 +81,7 @@
 		"deploy": "pnpm compile --build-profile production && ldenv hardhat --network @@MODE deploy @@",
 		"verify": "ldenv rocketh-verify -e @@MODE @@",
 		"export": "ldenv rocketh-export -e @@MODE @@",
-		"typescript": "tsc",
+		"typescript": "tsc && tsc -p tsconfig.constants.json",
 		"---------------------- START ---------------------- ": "",
 		"stop": "zellij kill-session $npm_package_name",
 		"start": "zellij-launcher a $npm_package_name || zellij -n zellij.kdl -s $npm_package_name"
