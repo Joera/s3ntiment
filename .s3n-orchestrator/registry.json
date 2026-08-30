@@ -1,0 +1,268 @@
+{
+  "generated": "2026-08-28",
+  "from": "s3n-orchestrator",
+  "context": "close seam coverage on PR #4 contract tests. User priority: frontend integration (shared encoding so frontend tests can build on tested encoding) > local-chain e2e (dropped).",
+  "tasks": {
+    "shared-encoding": {
+      "title": "deepseek-shared-encoding",
+      "worker": "builder",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-shared-encoding",
+      "branch": "deepseek/shared-encoding",
+      "status": "implemented-pr-open",
+      "conversation_id": "331599f79bdc4d518080f19427f8b690",
+      "pr": "https://github.com/Joera/s3ntiment/pull/6",
+      "gates": "36/36 hardhat tests, build:shared green, frontend-organiser vite build green (orchestrator-verified)",
+      "review": {
+        "title": "deepseek-review-shared-encoding",
+        "conv": "9e5e149353ba49f490ae557a9b81cedb",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/shared-encoding-2026-08-28.md"
+      }
+    },
+    "abi-snapshot": {
+      "title": "deepseek-abi-snapshot",
+      "worker": "builder",
+      "note": "solaris boot failure (hermes TUI init); re-dispatched to builder",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-abi-snapshot",
+      "branch": "deepseek/abi-snapshot",
+      "status": "implemented-pr-open",
+      "conversation_id": "b97d658d60be4d31939c905b81cb2184",
+      "pr": "https://github.com/Joera/s3ntiment/pull/5",
+      "review": {
+        "title": "deepseek-review-abi-snapshot",
+        "conv": "7793cae4916d4be4bb5a65f8e1827921",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/abi-snapshot-2026-08-28.md"
+      }
+    },
+    "ht-respondent-auth-tests": {
+      "title": "deepseek-ht-respondent-auth-tests",
+      "worker": "builder",
+      "note": "solaris boot failure persisted after user restart; routed to builder. User: tests for ht respondent frontend, skip onboarding, start with authController.",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-ht-respondent-auth-tests",
+      "branch": "deepseek/ht-respondent-auth-tests",
+      "status": "implemented-pr-open",
+      "conversation_id": "a0903f1dfdeb4b5f8f853faf4aa072ac",
+      "pr": "https://github.com/Joera/s3ntiment/pull/7",
+      "gates": "19/19 vitest (auth.factory 9, auth-ctrlr 5, card-signature.seam 5), vite build green (orchestrator-verified at 744abe864)",
+      "review": {
+        "title": "deepseek-review-ht-respondent-auth-tests",
+        "conv": "599e692ba50e4abab1385809691737a4",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/ht-respondent-auth-tests-2026-08-28.md"
+      }
+    },
+    "nillcc-backend-tests": {
+      "title": "deepseek-nillcc-backend-tests",
+      "worker": "builder",
+      "note": "solaris unavailable (hermes TUI boot fail persists). User: write tests for nilcc-backend (dir is nillcc-backend double-L), before the respondent surveyController. HTTP/main.ts layer out of scope (needs refactor).",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-nillcc-backend-tests",
+      "branch": "deepseek/nillcc-backend-tests",
+      "status": "approved",
+      "conversation_id": "dd9cf4a1464449cb891c9aa87cc2ecd1",
+      "pr": 8,
+      "commit": "28257fcfb",
+      "review": {
+        "title": "deepseek-review-nillcc-backend-tests",
+        "conv": "0466436d6a2d4b81a8a9048ed5f5f52e",
+        "status": "APPROVE_WITH_NITS",
+        "blocking": "none",
+        "verdict": "brain/reviews/nillcc-backend-tests-2026-08-28.md"
+      }
+    },
+    "respondent-survey-ctrlr": {
+      "phase": "explore",
+      "worker": "builder",
+      "conv": "c2b765fc4a0d416c86299e83db9b1e1f",
+      "status": "approved",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-respondent-survey-ctrlr-tests",
+      "branch": "deepseek/respondent-survey-ctrlr-tests",
+      "note": "User confirmed: fold R1 fix into tranche. R1 = SurveyController.this.pool never assigned -> success path unreachable. Pool config (pkpId/pkpDid) actually lives in IPFS EncryptedConfig.config, same source backend uses. Fix must plumb pool config out of decrypted EncryptedConfig (NOT naive this.pool = surveyFromStore.pool, that is a string poolId).",
+      "conversation_id": "070dbbe3201d4d738979442f6a380db0",
+      "commit": "9a24b19ab",
+      "pr": 10,
+      "gates": "26/26 vitest (survey-ctrlr 7, auth.factory 9, auth-ctrlr 5, seam 5), vite build green (orchestrator-verified)",
+      "diff": "brain/reviews/respondent-survey-ctrlr-tests.diff",
+      "review": {
+        "title": "deepseek-review-respondent-survey-ctrlr-tests",
+        "status": "APPROVE_WITH_NITS",
+        "conv": "15c940f9f2b14629966db08f12aae45f",
+        "blocking": "none",
+        "verdict": "brain/reviews/respondent-survey-ctrlr-tests-2026-08-28.md"
+      }
+    },
+    "respondent-invite-card": {
+      "phase": "implement",
+      "worker": "builder",
+      "conv": "d378ff3465cb4066abb6b6223c9d788e",
+      "status": "implementing",
+      "note": "Tranche A (respondents): card-class.seam + router-entry-gates (with pure gate-helper refactor) + card-url round-trip. Tranche B (organiser invitation.factory w/ vitest wiring) = separate later task.",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/s3ntiment/worktrees/s3ntiment-respondent-invite-card-tests",
+      "branch": "deepseek/respondent-invite-card-tests",
+      "conversation_id": "c4e1e7926d244290a21da591412e21a7"
+    },
+    "respondent-invite-card-tests": {
+      "pr": 11,
+      "branch": "deepseek/respondent-invite-card-tests",
+      "commit": "f06db2958",
+      "impl_conv": "c4e1e7926d244290a21da591412e21a7",
+      "review_conv": "4b2b2c93be4947a1843b1ea9a729c3f3",
+      "reviewer": "builder",
+      "status": "APPROVED",
+      "gates_verified": "49/49 vitest (7 files) + vite build green",
+      "verdict": "APPROVE_WITH_NITS (no blockers)"
+    },
+    "respondent-coverage-gaps-explore": {
+      "explore_conv": "7518db79ba274de081fb084c26423674",
+      "status": "done",
+      "report": "brain/audits/respondent-coverage-gaps-2026-08-28.md"
+    },
+    "respondent-stores-ctrlrs-tests": {
+      "title": "deepseek-respondent-stores-ctrlrs-tests",
+      "worker": "builder",
+      "note": "finish-up respondent tranche A: state stores + used-card-ctrlr + R1 cold-start regression (node-env quick wins)",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/s3ntiment/worktrees/s3ntiment-respondent-stores-ctrlrs-tests",
+      "branch": "deepseek/respondent-stores-ctrlrs-tests",
+      "status": "implemented-pr-open",
+      "conversation_id": "9aebf7b077ea4b0691ea69a62bd2a7ff",
+      "commit": "6a38eda9c8ae4f218ffe86da5666a01e019888ce",
+      "pr": "https://github.com/Joera/s3ntiment/pull/12",
+      "gates": "84/84 vitest (9 files), build green 42.38s (orchestrator-verified at 6a38eda9c)",
+      "review": {
+        "title": "deepseek-review-stores-ctrlrs-tests",
+        "conv": "e65fcbc057a344f686e505c7bf414034",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/respondent-stores-ctrlrs-tests-2026-08-28.md"
+      }
+    },
+    "respondent-survey-questions-tests": {
+      "title": "deepseek-respondent-survey-questions-tests",
+      "worker": "builder",
+      "note": "finish-up respondent tranche B: survey-questions.ts survey form (real component harness or pure-helper extraction)",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/s3ntiment/worktrees/s3ntiment-respondent-survey-questions-tests",
+      "branch": "deepseek/respondent-survey-questions-tests",
+      "status": "implemented-pr-open",
+      "conversation_id": "c1bd8ca16a714418b03a56c8ca3dfc35",
+      "commit": "7c6577a145de093054e305f8c5cee0473fe04bd2",
+      "pr": "https://github.com/Joera/s3ntiment/pull/13",
+      "gates": "72/72 vitest (8 files: 49 existing + 23 survey-questions), build green (orchestrator-verified at 7c6577a14)",
+      "review": {
+        "title": "deepseek-review-survey-questions-tests",
+        "conv": "2b897394acba42edb11ee5e981e78272",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/respondent-survey-questions-tests-2026-08-28.md"
+      }
+    },
+    "organiser-frontend-explore": {
+      "title": "deepseek-explore-organiser-frontend",
+      "worker": "builder",
+      "note": "Tranche B: organiser producer-side tests (invitation.factory + card seam). Exploring organiser frontend surface first.",
+      "purpose": "explore",
+      "status": "explored",
+      "conversation_id": "87e78ee57e8448bdb54c5ea58080c2eb",
+      "report": "brain/audits/organiser-frontend-exploration-2026-08-28.md"
+    },
+    "organiser-invite-tests": {
+      "title": "deepseek-organiser-invite-tests",
+      "worker": "builder",
+      "note": "Tranche B implement: wire vitest into frontend-organiser + invitation.factory tests (producer->consumer round-trip via shared parseCardURL) + utils tests",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/s3ntiment/worktrees/s3ntiment-organiser-invite-tests",
+      "branch": "deepseek/organiser-invite-tests",
+      "status": "implemented-pr-open",
+      "conversation_id": "e3dce904491c44f887d09736ee9d4eff",
+      "commit": "929f65242bb6150304489e78a41f66aa03f97d82",
+      "pr": "https://github.com/Joera/s3ntiment/pull/14",
+      "gates": "28/28 vitest (4 files: invitation.factory 14, survey.factory 3, hex 4, regex 7), build green 1m16s (orchestrator-verified at 929f65242)",
+      "review": {
+        "title": "deepseek-review-organiser-invite-tests",
+        "conv": "b23c1ea8968240a0ae9c45cae3397fcf",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/organiser-invite-tests-2026-08-28.md"
+      }
+    },
+    "shared-unit-tests": {
+      "title": "deepseek-shared-unit-tests",
+      "worker": "builder",
+      "note": "Bucket 1.1 \u2014 dedicated vitest suite for shared/ pure logic (scoring/tabulate/combineShares/response/collection-schema/aggregation-query/did/retries). Test-only; add vitest dep+config+test script to shared.",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-shared-unit-tests",
+      "branch": "deepseek/shared-unit-tests",
+      "status": "implemented-pr-open",
+      "conversation_id": "4b264662eece4095a7f120a6a8fcd4bf",
+      "pr": "https://github.com/Joera/s3ntiment/pull/16",
+      "gates": "86/86 shared vitest (9 files), shared tsc build green, contracts hardhat 36/36, frontend-respondents 107/107 (orchestrator-verified)",
+      "review": {
+        "title": "deepseek-review-shared-unit-tests",
+        "conv": "c0853d7c8e5d4fccb1f48da18ca4fcee",
+        "status": "APPROVED"
+      }
+    },
+    "nilcc-builder-branches": {
+      "title": "deepseek-nilcc-builder-branches",
+      "worker": "builder",
+      "note": "Bucket 1.2 \u2014 NilDBBuilderService branch coverage (submitResponseForUser idempotent replace, delegateCollectionToPkp/getOwnerReadDelegation, findSurveyResults). Needs fake builderClient injection seam + parameterized 5s delay (small behavior-preserving source change).",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-nilcc-builder-branches",
+      "branch": "deepseek/nilcc-builder-branches",
+      "status": "implemented-pr-open",
+      "conversation_id": "36d7ebc452244eb8a76a77e911a77a1a",
+      "pr": "https://github.com/Joera/s3ntiment/pull/15",
+      "gates": "35/35 vitest (4 files), tsc build green (orchestrator-verified)",
+      "latent_bug": "getOwnerReadDelegation 365d expiresIn exceeds NUC ~28d max -> can never delegate as written (flagged, not fixed)",
+      "review": {
+        "title": "deepseek-review-nilcc-builder-branches-2",
+        "conv": "f0096109e1f94363b9521e19c377f6f6",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/nilcc-builder-branches-2026-08-28.md",
+        "note": "fresh re-dispatch APPROVED; prior reviewer (bd4b7685) hung on root-wide grep and was closed"
+      }
+    },
+    "contracts-micro-tests": {
+      "title": "deepseek-contracts-micro-tests",
+      "worker": "builder",
+      "note": "Bucket 1.3 \u2014 contracts micro-branches: InvalidBatchId during createSurvey bootstrap, multi-pool getSafePools/getPoolBatches ordering, _recoverSigner v=26 edge. Test-only.",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-contracts-micro-tests",
+      "branch": "deepseek/contracts-micro-tests",
+      "status": "implemented-pr-open",
+      "conversation_id": "37aa15532c2044f49c04c4b6ac151281",
+      "pr": "https://github.com/Joera/s3ntiment/pull/18",
+      "gates": "41/41 hardhat test (was 36), check:abi green (orchestrator-verified)",
+      "note_extra": "Refuted audit premise: v=26 -> 53 reverts (not v=26->27 valid); covered real low-v v=0->27 / v=1->28. Test-only, lockfile clean.",
+      "review": {
+        "title": "deepseek-review-contracts-micro-tests",
+        "conv": "127173b326994806924890ccccf56592",
+        "status": "APPROVED"
+      }
+    },
+    "getpoolsurveyssince": {
+      "title": "deepseek-v4-flash-getpoolsurveyssince",
+      "worker": "builder",
+      "model": "deepseek-v4-flash-0731",
+      "purpose": "implement",
+      "worktree": "/home/joera/code/worktrees/s3ntiment-getpoolsurveyssince",
+      "branch": "deepseek/getpoolsurveyssince",
+      "status": "implemented-pr-open",
+      "conversation_id": "417fef4fd1e843568e00843f18536f05",
+      "pr": "https://github.com/Joera/s3ntiment/pull/22",
+      "gates": "67/67 hardhat tests (60 S3ntimentSurveyStore incl. 6 new getPoolSurveysSince cases + 7 encoding.seam), check:abi green (34 entries) \u2014 orchestrator-verified at PR head 1856b2d1",
+      "report": "brain/reports/getpoolsurveyssince-2026-08-29.md",
+      "review": {
+        "title": "qwen-3-8-27b-review-getpoolsurveyssince",
+        "conv": "0b979f7ed1a44b54a3daaa19f2324c97",
+        "status": "APPROVED",
+        "verdict": "brain/reviews/getpoolsurveyssince-2026-08-29.md",
+        "note": "solaris unavailable (no model provider); review run on builder/qwen-3-8-27b. Deployment-JSON abi-only sync ruled acceptable."
+      }
+    }
+  }
+}

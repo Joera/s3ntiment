@@ -1,0 +1,1076 @@
+diff --git a/brain/audits/nillcc-backend-tests-2026-08-28.md b/brain/audits/nillcc-backend-tests-2026-08-28.md
+new file mode 100644
+index 000000000..7bec51ab3
+--- /dev/null
++++ b/brain/audits/nillcc-backend-tests-2026-08-28.md
+@@ -0,0 +1,115 @@
++# nillcc-backend — First Tranche of Tests
++
++Date: 2026-08-28
++Branch: `deepseek/nillcc-backend-tests` (from `main` @ `bd9da7a48`)
++Worktree: `/home/joera/code/worktrees/s3ntiment-nillcc-backend-tests`
++Package: `@s3ntiment/nillcc-backend` (`nillcc-backend`, double-L)
++
++Grounding doc: `brain/audits/nilcc-backend-exploration-2026-08-28.md`.
++
++---
++
++## What was added
++
++### 1. Vitest wiring (mirrors `frontend-respondents`)
++- `nillcc-backend/package.json`: added `vitest ^4.1.11` to `devDependencies` and a
++  `"test": "vitest run"` script.
++- `nillcc-backend/vitest.config.ts`: `environment: 'node'` (no jsdom),
++  `include: ['src/**/*.test.ts']`, `setupFiles: ['./test/setup.ts']`.
++- `nillcc-backend/test/setup.ts`: guarantees benign env at module-load time so the
++  NilDB builder service can be constructed without a real `.env`/creds:
++  `VITE_NIL_BUILDER_PRIVATE_KEY` (deterministic dev key) and `VITE_NILDB_NODES`.
++- `nillcc-backend/tsconfig.json`: appended `src/**/*.test.ts` to `exclude` so the
++  `tsc` build emits no test files to `dist` (mirrors the frontend, which never emits
++  tests via its Vite build). No production source or `main.ts` was modified.
++
++### 2. Test files (all under `src/**`, matching the vitest include glob)
++
++| File | Target | Suite size |
++|---|---|---|
++| `src/survey.ctrlr.test.ts` | `SurveyController` | 8 tests |
++| `src/pool.ctrlr.test.ts` | `PoolController` | 5 tests |
++| `src/services/nildb.builder.service.test.ts` | `NilDBBuilderService` | 7 tests |
++| `src/services/nildb.pkp.service.test.ts` | `NillionPkpClient` | 8 tests |
++
++**Total: 4 files, 28 tests.**
++
++### Coverage per contract item
++
++- **SurveyController** (`survey.ctrlr.test.ts`): `create` happy path (stripScoring /
++  isScored / schema + aggregation-query delegation, queryIds recorded, dual lit.encrypt,
++  builder-side encryptToBuilder, IPFS upload, CID returned); `update` happy path
++  (re-encrypt + upload with surveyId/poolId/queryIds/isScored); `get` happy path (on-chain
++  read → IPFS fetch → `encryptedScoring` stripped) **and the 404 driver** (returns `null`
++  when no cid is stored); `score` happy path (calculateScore over decrypted scoring +
++  existing response), no-response → `false`, unscored survey → `null`; `getUserDelegation`
++  (fetchSurveyAndParseCid + PKP client write-delegation delegation).
++- **PoolController** (`pool.ctrlr.test.ts`): `create` happy path (PKP + action CIDs +
++  group + usage key + publicKeyToDidKey, `{ pkpId, pkpDid, groupId }` returned) and the
++  two controller-level failure returns (`missing poolId`, `missing safeAddress`);
++  `update` — **confirmed it is currently a no-op**: asserts it resolves `undefined` and
++  performs no work (no invented behavior); `registerBuilder` happy path (usage key lookup +
++  `NillionPkpClient.registerAsBuilder` with the 6 expected args, `{ ok: true }`).
++- **NilDBBuilderService** (`nildb.builder.service.test.ts`): real `encryptToBuilder`/
++  `decryptFromBuilder` ecies **round-trip** against a locally-derived signer key+did (no
++  network); construction succeeds with the setup env; `exists` / `getResponseById` /
++  `createSurveyCollection` / `getCollectionInfo` (incl. error → `null`) against an injected
++  fake `builderClient` (the SecretVaultBuilderClient collaborator).
++- **NillionPkpClient** (`nildb.pkp.service.test.ts`): fakes `this.lit.executeAction`,
++  mocks global `fetch`, and asserts the exact hardcoded nil-node REST URL + method +
++  headers + body and response handling: `registerAsBuilder` (3 nodes, bearer token, body
++  `{did,name}`, status map; plus invocation-failure → `undefined`), `createCollection`,
++  `createQuery`, `runQuery` (body `{_id, variables:{}}`, runIds per node did),
++  `readQueryResults` (GET `/v1/queries/run/:runId`, completed-only → `combineShares`),
++  `getUserWriteDelegation` (executeAction params + delegation returned). Zero network.
++
++## Shared / seam usage
++- Both controllers and `NillionPkpClient` import the **unbuilt, gitignored**
++  `@s3ntiment/shared` barrel. Per the contract's option (b) and the
++  `frontend-respondents/src/controllers/auth-ctrlr.test.ts` precedent, each test file
++  `vi.mock('@s3ntiment/shared', ...)` with the specific helpers it exercises
++  (`stripScoring`, `isScored`, `createSurveyCollectionSchema`, `createSurveyAggregationQuery`,
++  `fetchSurveyAndParseCid`, `calculateScore`, `combineShares`, `compactAction`,
++  `ownerInvocationAction`, `userDelegationAction`, `publicKeyToDidKey`, `tallyResults`).
++  This keeps tests deterministic and offline regardless of whether `shared/dist` exists.
++- In-package `NillionPkpClient` is also `vi.mock`'d inside the controller tests so the
++  controller surface can be tested without driving the real client.
++- `s3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json` is imported for real
++  (committed, local file) via the bare specifier + `with { type: 'json' }`.
++- DI seams: both controllers and the PKP client use constructor-injected `any` deps, so all
++  collaborators are hand-rolled fakes.
++
++## Zero-network guarantee
++- `@s3ntiment/shared` is mocked (no real Lit/Viem/IPFS). NilDB builder helpers are tested
++  via local key derivation + eciesjs only. Global `fetch` is stubbed in the PKP client
++  tests; no Lit / NilDB / IPFS / Base RPC calls are made. `test/setup.ts` supplies env so
++  no `.env`/creds are required.
++
++## Gates (run locally in the worktree)
++
++### Test
++```
++pnpm --filter @s3ntiment/nillcc-backend test
++Test Files  4 passed (4)
++     Tests  28 passed (28)
++```
++
++### Build (tsc, production dist — tests excluded, still green)
++```
++pnpm --filter @s3ntiment/nillcc-backend build
++$ tsc   # exit 0
++```
++`dist` contains no `*.test.*` files (verified: 0).
++
++## Note: `main.ts` HTTP-layer refactor (follow-up needed)
++Per contract item 7, this tranche deliberately excludes the Express HTTP / `main.ts` layer:
++no live-server route tests, no `export app`, no importing `main.ts` (it triggers top-level
++network side effects + `app.listen`). Consequently the **route-table status mappings that
++live in `main.ts`** — `update → 400 SURVEY_ID_MISMATCH` (guard `req.params.id !==
++body.surveyConfig?.id`), `score → 403 UNAUTHORIZED` (inline `isPoolMember` check), and the
++wrapper `500 CREATE_FAILED / SCORE_FAILED / ...` mappings — are **not** covered at the HTTP
++level in this tranche. The controller-level semantics that feed them *are* covered
++(e.g. `get` → `null` drives 404; `score` unscored → `null`). Before HTTP-layer tests
++(`supertest`-style), `main.ts` needs a refactor to an exported `createApp(deps)` /
++`createRouter(deps)` factory with dependencies injected, so route handlers can be mounted
++without a port and without top-level side effects.
+diff --git a/nillcc-backend/package.json b/nillcc-backend/package.json
+index a8f4a4085..943a76b96 100644
+--- a/nillcc-backend/package.json
++++ b/nillcc-backend/package.json
+@@ -5,6 +5,7 @@
+   "scripts": {
+     "dev": "tsx watch src/main.ts",
+     "build": "tsc",
++    "test": "vitest run",
+     "start": "node dist/main.js"
+   },
+   "dependencies": {
+@@ -36,7 +37,8 @@
+     "@types/node": "^24.10.14",
+     "esbuild": "^0.27.3",
+     "tsx": "^4.7.0",
+-    "typescript": "^5.3.3"
++    "typescript": "^5.3.3",
++    "vitest": "^4.1.11"
+   },
+   "pnpm": {
+     "overrides": {
+diff --git a/nillcc-backend/src/pool.ctrlr.test.ts b/nillcc-backend/src/pool.ctrlr.test.ts
+new file mode 100644
+index 000000000..dc44c66a2
+--- /dev/null
++++ b/nillcc-backend/src/pool.ctrlr.test.ts
+@@ -0,0 +1,156 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// ---- Mocks (hoisted so the controller's own imports are intercepted before
++// resolution). Keep the Node environment and mock the unbuilt shared barrel
++// plus the in-package NillionPkpClient — no real Lit / NilDB / network.
++
++const h = vi.hoisted(() => ({
++  clientInstances: [] as any[],
++}));
++
++vi.mock('@s3ntiment/shared', () => ({
++  compactAction: vi.fn((a: any) => a),
++  encryptAction: 'encrypt-action',
++  getDecryptForOwnerAction: vi.fn(() => 'decrypt-owner'),
++  getDecryptForRespondentAction: vi.fn(() => 'decrypt-member'),
++  getPkpPublicKeyAction: 'get-public-key-action',
++  ownerInvocationAction: vi.fn(() => 'owner-invocation'),
++  publicKeyToDidKey: vi.fn(() => 'did:key:pkp'),
++  userDelegationAction: vi.fn(() => 'user-delegation'),
++}));
++
++vi.mock('./services/nildb.pkp.service.js', () => ({
++  NillionPkpClient: class {
++    registerAsBuilder = vi.fn(async () => ({ registered: true }));
++    constructor(..._args: any[]) {
++      h.clientInstances.push(this);
++    }
++  },
++}));
++
++import { PoolController } from './pool.ctrlr.js';
++import { compactAction, publicKeyToDidKey } from '@s3ntiment/shared';
++
++const POOL_ID = '0xpool123';
++
++function fakeDeps() {
++  const lit = {
++    createPkp: vi.fn(async () => 'pkp-address'),
++    getActionCid: vi.fn(async (a: any) => `cid:${String(a)}`),
++    registerAction: vi.fn(async (cid: any, name: any) => ({ hashedCid: `h:${name}` })),
++    createGroup: vi.fn(async (..._args: any[]) => ({ group_id: 'group-1' })),
++    createUsageKey: vi.fn(async () => ({ usage_api_key: 'usage-key-1' })),
++    executeAction: vi.fn(async () => ({
++      response: { publicKey: '0xPubKey' },
++    })),
++  };
++  const litPoolKeys = {
++    get: vi.fn(async () => 'usage-key-1'),
++    set: vi.fn(),
++  };
++  const nillDB = {};
++  return { lit, litPoolKeys, nillDB };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  h.clientInstances.length = 0;
++});
++
++describe('PoolController.create', () => {
++  it('creates a PKP, registers actions, builds a group + usage key (happy path)', async () => {
++    const deps = fakeDeps();
++    const ctrl = new PoolController(deps.lit, deps.litPoolKeys, deps.nillDB);
++    const body = {
++      signature: 'sig-1',
++      userAddress: '0xUser',
++      poolId: POOL_ID,
++      safeAddress: '0xSafE',
++    };
++
++    const result = await ctrl.create(body);
++
++    // PKP + 4 action CIDs + getPublicKey + user-delegation = 7 parallel ops.
++    expect(deps.lit.createPkp).toHaveBeenCalledTimes(1);
++    expect(deps.lit.getActionCid).toHaveBeenCalledTimes(6);
++    expect(compactAction).toHaveBeenCalled();
++
++    // Six actions registered (encrypt + 4 pool-specific + get-public-key).
++    expect(deps.lit.registerAction).toHaveBeenCalledTimes(6);
++
++    // Group created with the PKP address and all hashed action cids.
++    expect(deps.lit.createGroup).toHaveBeenCalledTimes(1);
++    const groupArgs = deps.lit.createGroup.mock.calls[0];
++    expect(groupArgs[2]).toContain('pkp-address');
++    expect(groupArgs[3]).toHaveLength(6);
++
++    // Usage key derived and persisted for the pool.
++    expect(deps.lit.createUsageKey).toHaveBeenCalledTimes(1);
++    expect(deps.litPoolKeys.set).toHaveBeenCalledWith(POOL_ID, 'usage-key-1');
++
++    expect(deps.lit.executeAction).toHaveBeenCalledTimes(1);
++    expect(publicKeyToDidKey).toHaveBeenCalledWith('0xPubKey');
++
++    expect(result).toEqual({ pkpId: 'pkp-address', pkpDid: 'did:key:pkp', groupId: 'group-1' });
++  });
++
++  it('returns a missing-poolId string and does no work when poolId is absent (400-class guard)', async () => {
++    const deps = fakeDeps();
++    const ctrl = new PoolController(deps.lit, deps.litPoolKeys, deps.nillDB);
++    const result = await ctrl.create({ signature: 'sig', userAddress: 'ua', safeAddress: '0xSafE' });
++    expect(result).toBe('missing poolId');
++    expect(deps.lit.createPkp).not.toHaveBeenCalled();
++  });
++
++  it('returns a missing-safeAddress string when safeAddress is absent', async () => {
++    const deps = fakeDeps();
++    const ctrl = new PoolController(deps.lit, deps.litPoolKeys, deps.nillDB);
++    const result = await ctrl.create({ signature: 'sig', userAddress: 'ua', poolId: POOL_ID });
++    expect(result).toBe('missing safeAddress');
++    expect(deps.lit.createPkp).not.toHaveBeenCalled();
++  });
++});
++
++describe('PoolController.update', () => {
++  it('is currently a no-op — resolves undefined and performs no work', async () => {
++    const deps = fakeDeps();
++    const ctrl = new PoolController(deps.lit, deps.litPoolKeys, deps.nillDB);
++
++    const result = await ctrl.update({ survey: {}, poolConfig: {} });
++
++    expect(result).toBeUndefined();
++    expect(deps.lit.createPkp).not.toHaveBeenCalled();
++    expect(deps.lit.executeAction).not.toHaveBeenCalled();
++    expect(deps.litPoolKeys.get).not.toHaveBeenCalled();
++  });
++});
++
++describe('PoolController.registerBuilder', () => {
++  it('registers the PKP as a builder via a NillionPkpClient and returns { ok: true }', async () => {
++    const deps = fakeDeps();
++    const ctrl = new PoolController(deps.lit, deps.litPoolKeys, deps.nillDB);
++    const body = {
++      signature: 'sig-1',
++      userAddress: '0xUser',
++      poolId: POOL_ID,
++      pkpId: 'pkp-1',
++      pkpDid: 'did:key:pkp1',
++      safeAddress: '0xSafE',
++    };
++
++    const result = await ctrl.registerBuilder(body);
++
++    expect(deps.litPoolKeys.get).toHaveBeenCalledWith(POOL_ID);
++    expect(h.clientInstances.length).toBe(1);
++    const client = h.clientInstances[0];
++    expect(client.registerAsBuilder).toHaveBeenCalledWith(
++      'sig-1',
++      '0xUser',
++      'pkp-1',
++      'did:key:pkp1',
++      'usage-key-1',
++      `builder-${POOL_ID}`,
++    );
++    expect(result).toEqual({ ok: true });
++  });
++});
+diff --git a/nillcc-backend/src/services/nildb.builder.service.test.ts b/nillcc-backend/src/services/nildb.builder.service.test.ts
+new file mode 100644
+index 000000000..d56271f70
+--- /dev/null
++++ b/nillcc-backend/src/services/nildb.builder.service.test.ts
+@@ -0,0 +1,127 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// NilDBBuilderService tests. The module reads VITE_NIL_BUILDER_PRIVATE_KEY and
++// VITE_NILDB_NODES at module load — test/setup.ts guarantees benign values so
++// construction does not throw. The unbuilt shared barrel is mocked for
++// determinism; the builder's NilDB collaborators are injected as fakes.
++//
++// NOTE: the ecies encryptToBuilder/decryptFromBuilder helpers are exercised
++// against a real local signer key (no network — getDid() is local derivation).
++
++vi.mock('@s3ntiment/shared', () => ({
++  tallyResults: vi.fn((data: any, _groups: any) => data),
++}));
++
++import { NilDBBuilderService } from './nildb.builder.service.js';
++
++async function makeService() {
++  // Real construction against the setup-provided env key (local, no network).
++  const svc: any = new NilDBBuilderService();
++  svc.builderDid = await svc.builderSigner.getDid();
++  return svc;
++}
++
++function fakeBuilderClient(overrides: Record<string, any> = {}) {
++  return {
++    readProfile: vi.fn(async () => ({ profile: 'p' })),
++    readCollection: vi.fn(async () => ({ collection: 'c' })),
++    createCollection: vi.fn(async () => ({ ok: true })),
++    createStandardData: vi.fn(async () => ({ created: true })),
++    deleteData: vi.fn(async () => ({ deleted: true })),
++    findData: vi.fn(async () => ({ data: [] })),
++    ...overrides,
++  };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++});
++
++describe('NilDBBuilderService.encryptToBuilder / decryptFromBuilder', () => {
++  it('round-trips structured data through ecies using the builder key+did', async () => {
++    const svc = await makeService();
++
++    const payload = { scoring: { q1: 2, q2: 1 }, groups: [{ id: 'g1' }] };
++    const encrypted = svc.encryptToBuilder(payload);
++
++    // Encrypted output is a base64 string of the ecies ciphertext.
++    expect(typeof encrypted).toBe('string');
++    expect(encrypted.length).toBeGreaterThan(0);
++
++    const decrypted = svc.decryptFromBuilder(encrypted);
++    expect(decrypted).toEqual(payload);
++  });
++});
++
++describe('NilDBBuilderService (injected builder client)', () => {
++  it('constructs without throwing when env provides a builder key/nodes', async () => {
++    const svc = await makeService();
++    expect(svc.builderKey).toBeTruthy();
++    expect(svc.builderDid?.didString).toMatch(/^did:key:/);
++  });
++
++  it('exists() returns the list of doc ids when rows are found', async () => {
++    const svc = await makeService();
++    svc.builderClient = fakeBuilderClient({
++      findData: vi.fn(async () => ({ data: [{ _id: 'd1' }, { _id: 'd2' }] })),
++    });
++
++    const result = await svc.exists('survey-1', '0xUser');
++    expect(svc.builderClient.findData).toHaveBeenCalledWith({
++      collection: 'survey-1',
++      filter: { signer: '0xUser' },
++    });
++    expect(result).toEqual(['d1', 'd2']);
++  });
++
++  it('exists() returns false when no rows are found', async () => {
++    const svc = await makeService();
++    svc.builderClient = fakeBuilderClient();
++    const result = await svc.exists('survey-1', '0xUser');
++    expect(result).toBe(false);
++  });
++
++  it('getResponseById() returns the first matching row', async () => {
++    const svc = await makeService();
++    const row = { _id: 'd1', answer: 'a' };
++    svc.builderClient = fakeBuilderClient({
++      findData: vi.fn(async () => ({ data: [row] })),
++    });
++
++    const result = await svc.getResponseById('survey-1', 'd1');
++    expect(svc.builderClient.findData).toHaveBeenCalledWith({
++      collection: 'survey-1',
++      filter: { _id: 'd1' },
++    });
++    expect(result).toBe(row);
++  });
++
++  it('createSurveyCollection() forwards the schema and returns the id', async () => {
++    const svc = await makeService();
++    svc.builderClient = fakeBuilderClient();
++    const rawSchema = { name: 's', type: 'cat', schema: { x: 1 } };
++
++    const result = await svc.createSurveyCollection('survey-1', rawSchema);
++    expect(svc.builderClient.createCollection).toHaveBeenCalledWith({
++      _id: 'survey-1',
++      name: 's',
++      type: 'cat',
++      schema: { x: 1 },
++    });
++    expect(result).toBe('survey-1');
++  });
++
++  it('getCollectionInfo() returns the collection or null on error', async () => {
++    const okSvc = await makeService();
++    okSvc.builderClient = fakeBuilderClient();
++    expect(await okSvc.getCollectionInfo('c1')).toEqual({ collection: 'c' });
++
++    const errSvc = await makeService();
++    errSvc.builderClient = fakeBuilderClient({
++      readCollection: vi.fn(async () => {
++        throw new Error('boom');
++      }),
++    });
++    expect(await errSvc.getCollectionInfo('c1')).toBeNull();
++  });
++});
+diff --git a/nillcc-backend/src/services/nildb.pkp.service.test.ts b/nillcc-backend/src/services/nildb.pkp.service.test.ts
+new file mode 100644
+index 000000000..e2f7466a9
+--- /dev/null
++++ b/nillcc-backend/src/services/nildb.pkp.service.test.ts
+@@ -0,0 +1,235 @@
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++
++// NillionPkpClient tests. The client talks to (a) Lit via this.lit.executeAction
++// and (b) hardcoded nil-node REST endpoints via global fetch. We fake this.lit
++// and mock global fetch, then assert the exact URL / method / headers / body and
++// the response handling — no real network.
++//
++// The unbuilt shared barrel is mocked deterministically (compactAction,
++// ownerInvocationAction, userDelegationAction, combineShares).
++
++vi.mock('@s3ntiment/shared', () => ({
++  combineShares: vi.fn((shares: any) => `combined:${shares.length}`),
++  compactAction: vi.fn((a: any) => a),
++  ownerInvocationAction: vi.fn(() => 'owner-invocation-action'),
++  userDelegationAction: vi.fn(() => 'user-delegation-action'),
++  tallyResults: vi.fn((d: any) => d),
++}));
++
++import { NillionPkpClient } from './nildb.pkp.service.js';
++import { combineShares, compactAction } from '@s3ntiment/shared';
++
++const POOL_ID = '0xpool123';
++const SAFE = '0xSafE';
++const CONTRACT = '0xContract';
++
++function fakeLit(execImpl?: any) {
++  return { executeAction: vi.fn(execImpl ?? (async () => ({ response: { invocation: 'inv-1' } }))) };
++}
++
++function mockFetch(impl: (url: string, init?: any) => any) {
++  const fn = vi.fn(impl);
++  vi.stubGlobal('fetch', fn);
++  return fn;
++}
++
++function client(lit: any = fakeLit()) {
++  return new NillionPkpClient(lit, POOL_ID, SAFE, CONTRACT) as any;
++}
++
++function nodeDids(c: any): string[] {
++  return (c.nodes as { did: string }[]).map((n) => n.did);
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++});
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++});
++
++describe('NillionPkpClient.registerAsBuilder', () => {
++  it('posts to /v1/builders/register on every node with the invocation bearer token', async () => {
++    const lit = fakeLit();
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({ status: 201 }));
++
++    const results = await c.registerAsBuilder('sig', '0xUser', 'pkp1', 'did:key:pkp1', 'uk');
++
++    expect(fetchFn).toHaveBeenCalledTimes(3);
++    const first = fetchFn.mock.calls[0];
++    expect(first[0]).toBe('https://nildb-stg-n1.nillion.network/v1/builders/register');
++    expect(first[1].method).toBe('POST');
++    expect(first[1].headers['Content-Type']).toBe('application/json');
++    expect(first[1].headers['Authorization']).toBe('Bearer inv-1');
++    expect(JSON.parse(first[1].body)).toEqual({ did: 'did:key:pkp1', name: 'S3ntiment PKP' });
++
++    // Keys per node did, with the REST status echoed.
++    const dids = nodeDids(c);
++    expect(Object.keys(results).sort()).toEqual([...dids].sort());
++    expect(Object.values(results)).toEqual([201, 201, 201]);
++  });
++
++  it('returns undefined when an invocation is undefined (invocation failed)', async () => {
++    const lit = fakeLit(async () => ({ response: { } }));
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({ status: 201 }));
++
++    const results = await c.registerAsBuilder('sig', '0xUser', 'pkp1', 'did', 'uk');
++    expect(results).toBeUndefined();
++    expect(fetchFn).not.toHaveBeenCalled();
++    expect(lit.executeAction).toHaveBeenCalledTimes(1);
++  });
++});
++
++describe('NillionPkpClient.createCollection', () => {
++  it('posts to /v1/collections and parses the JSON body per node', async () => {
++    const lit = fakeLit();
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({ status: 201, text: async () => '{"id":"c1"}' }));
++
++    const collectionData = { name: 's', schema: { x: 1 } };
++    const results = await c.createCollection('sig', '0xUser', 'pkp1', 'did', 'uk', collectionData);
++
++    expect(fetchFn).toHaveBeenCalledTimes(3);
++    const first = fetchFn.mock.calls[0];
++    expect(first[0]).toBe('https://nildb-stg-n1.nillion.network/v1/collections');
++    expect(first[1].method).toBe('POST');
++    expect(first[1].headers['Authorization']).toBe('Bearer inv-1');
++    expect(JSON.parse(first[1].body)).toEqual(collectionData);
++
++    const dids = nodeDids(c);
++    expect(results[dids[0]]).toEqual({ status: 201, data: { id: 'c1' } });
++  });
++});
++
++describe('NillionPkpClient.createQuery', () => {
++  it('posts to /v1/queries and parses the JSON response', async () => {
++    const lit = fakeLit();
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({ status: 201, text: async () => '{"qid":"q1"}' }));
++
++    const queryData = { _id: 'query-1', type: 'aggregation' };
++    const results = await c.createQuery('sig', '0xUser', 'pkp1', 'did', 'uk', queryData);
++
++    const first = fetchFn.mock.calls[0];
++    expect(first[0]).toBe('https://nildb-stg-n1.nillion.network/v1/queries');
++    expect(first[1].method).toBe('POST');
++    expect(JSON.parse(first[1].body)).toEqual(queryData);
++
++    const dids = nodeDids(c);
++    expect(results[dids[0]]).toEqual({ status: 201, data: { qid: 'q1' } });
++  });
++});
++
++describe('NillionPkpClient.runQuery', () => {
++  it('posts to /v1/queries/run with the query id and returns per-node run ids', async () => {
++    const lit = fakeLit();
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({ json: async () => ({ data: 'runId-1' }) }));
++
++    const runIds = await c.runQuery(
++      { signature: 'sig', userAddress: '0xUser' },
++      ['query-1'],
++      { pubKey: 'k' },
++      'usage-key',
++    );
++
++    expect(fetchFn).toHaveBeenCalledTimes(3);
++    const first = fetchFn.mock.calls[0];
++    expect(first[0]).toBe('https://nildb-stg-n1.nillion.network/v1/queries/run');
++    expect(first[1].method).toBe('POST');
++    expect(first[1].headers['Authorization']).toBe('Bearer inv-1');
++    expect(JSON.parse(first[1].body)).toEqual({ _id: 'query-1', variables: {} });
++
++    const dids = nodeDids(c);
++    expect(runIds[dids[0]]).toBe('runId-1');
++    expect(lit.executeAction).toHaveBeenCalledTimes(3);
++  });
++});
++
++describe('NillionPkpClient.readQueryResults', () => {
++  it('GETs /v1/queries/run/:runId for completed nodes and combines shares', async () => {
++    const lit = fakeLit();
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({
++      json: async () => ({ data: { status: 'complete', result: { v: 1 } } }),
++    }));
++
++    const dids = nodeDids(c);
++    const runIds = Object.fromEntries(dids.map((d) => [d, `run-${d}`]));
++
++    const result = await c.readQueryResults(
++      { signature: 'sig', userAddress: '0xUser' },
++      { pubKey: 'k' },
++      'usage-key',
++      runIds,
++    );
++
++    expect(fetchFn).toHaveBeenCalledTimes(3);
++    const first = fetchFn.mock.calls[0];
++    expect(first[0]).toBe(`https://nildb-stg-n1.nillion.network/v1/queries/run/run-${dids[0]}`);
++    expect(first[1].method).toBeUndefined(); // GET has no method set
++    expect(first[1].headers['Authorization']).toBe('Bearer inv-1');
++
++    // All three nodes reported 'complete' -> 3 shares combined.
++    expect(combineShares).toHaveBeenCalledWith(expect.any(Array));
++    expect(result).toBe('combined:3');
++  });
++
++  it('passes only completed nodes to combineShares (ignores incomplete)', async () => {
++    const lit = fakeLit();
++    const c = client(lit);
++    const fetchFn = mockFetch(async () => ({
++      json: async () => ({ data: { status: 'pending', result: undefined } }),
++    }));
++
++    const dids = nodeDids(c);
++    const runIds = Object.fromEntries(dids.map((d) => [d, `run-${d}`]));
++
++    const result = await c.readQueryResults(
++      { signature: 'sig', userAddress: '0xUser' },
++      { pubKey: 'k' },
++      'usage-key',
++      runIds,
++    );
++
++    expect(fetchFn).toHaveBeenCalledTimes(3);
++    expect(result).toBe('combined:0');
++  });
++});
++
++describe('NillionPkpClient.getUserWriteDelegation', () => {
++  it('executes the user-delegation action and returns the delegation token', async () => {
++    const lit = fakeLit(async () => ({ response: { delegation: 'del-token' } }));
++    const c = client(lit);
++
++    const result = await c.getUserWriteDelegation(
++      'sig',
++      '0xUser',
++      'survey-1',
++      'did:key:user',
++      POOL_ID,
++      'usage-key',
++      'pkp1',
++      'did:key:pkp1',
++    );
++
++    expect(compactAction).toHaveBeenCalled();
++    expect(lit.executeAction).toHaveBeenCalledTimes(1);
++    const [poolId, code, params, usageKey] = lit.executeAction.mock.calls[0];
++    expect(poolId).toBe(POOL_ID);
++    expect(code).toBe('user-delegation-action');
++    expect(usageKey).toBe('usage-key');
++    expect(params).toMatchObject({
++      signature: 'sig',
++      userAddress: '0xUser',
++      pkpId: 'pkp1',
++      pkpDid: 'did:key:pkp1',
++      userDid: 'did:key:user',
++      collectionId: 'survey-1',
++    });
++    expect(result).toEqual({ delegation: 'del-token' });
++  });
++});
+diff --git a/nillcc-backend/src/survey.ctrlr.test.ts b/nillcc-backend/src/survey.ctrlr.test.ts
+new file mode 100644
+index 000000000..697febea6
+--- /dev/null
++++ b/nillcc-backend/src/survey.ctrlr.test.ts
+@@ -0,0 +1,322 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// ---- Mocks (hoisted so the controller's own imports are intercepted before
++// resolution). We keep the Node environment — no jsdom, no real Lit / NilDB /
++// IPFS / Base RPC. The shared package and the in-package NillionPkpClient are
++// both replaced with hand-rolled fakes.
++//
++// The shared barrel is unbuilt/gitignored, so the bare specifier would not
++// resolve; mocking it here (the same approach as frontend-respondents
++// auth-ctrlr.test.ts) keeps tests deterministic and offline.
++
++const h = vi.hoisted(() => ({
++  // Every NillionPkpClient instance created by the controller is captured here.
++  clientInstances: [] as any[],
++}));
++
++vi.mock('@s3ntiment/shared', () => ({
++  stripScoring: vi.fn((s: any) => ({
++    safeConfigWithScoring: s,
++    safeConfig: s,
++    scoring: { scored: true },
++  })),
++  isScored: vi.fn((_groups: any) => true),
++  createSurveyCollectionSchema: vi.fn(() => ({ name: 'n', type: 't', schema: {} })),
++  createSurveyAggregationQuery: vi.fn((id: any) => ({ _id: `query-${id}` })),
++  fetchSurveyAndParseCid: vi.fn(async () => ({ poolId: 'pool-1' })),
++  calculateScore: vi.fn(() => 42),
++  withRetry: vi.fn(async (fn: any) => fn()),
++}));
++
++vi.mock('./services/nildb.pkp.service.js', () => ({
++  NillionPkpClient: class {
++    createCollection = vi.fn(async () => ({ ok: true }));
++    createQuery = vi.fn(async () => ({ ok: true }));
++    getUserWriteDelegation = vi.fn(async () => ({ delegation: 'del-1' }));
++    constructor(..._args: any[]) {
++      h.clientInstances.push(this);
++    }
++  },
++}));
++
++import { SurveyController } from './survey.ctrlr.js';
++import {
++  stripScoring,
++  isScored,
++  createSurveyCollectionSchema,
++  createSurveyAggregationQuery,
++  fetchSurveyAndParseCid,
++  calculateScore,
++} from '@s3ntiment/shared';
++import { NillionPkpClient } from './services/nildb.pkp.service.js';
++
++const SURVEY_ID = 'survey-abc';
++const POOL_ID = '0xpool123';
++const CID = 'QmFakeCid';
++
++function fakeDeps() {
++  const litPoolKeys = {
++    get: vi.fn(async () => 'usage-key-1'),
++    set: vi.fn(),
++  };
++  const lit = {
++    encrypt: vi.fn(async (_k: any, _id: any, data: any) => `enc:${data.length}`),
++  };
++  const nildb = {
++    builderDid: { didString: 'did:key:builder' },
++    encryptToBuilder: vi.fn(() => 'b64-encrypted'),
++    decryptFromBuilder: vi.fn(() => ({ scoring: { q1: 2 }, groups: [] })),
++    exists: vi.fn(async (..._a: any[]): Promise<any> => false),
++    getResponseById: vi.fn(async (..._a: any[]): Promise<any> => ({ answer: 'x' })),
++  };
++  const ipfs = {
++    uploadToPinata: vi.fn(async () => CID),
++    fetchFromPinata: vi.fn(async () =>
++      JSON.stringify({
++        id: SURVEY_ID,
++        pool: POOL_ID,
++        encryptedForOwner: 'enc-owner',
++        encryptedScoring: 'b64-encrypted',
++        title: 'Do you like coffee?',
++      }),
++    ),
++  };
++  const viem = {
++    read: vi.fn(async (..._a: any[]): Promise<any> => [CID, 1, 2]),
++  };
++  return { litPoolKeys, lit, nildb, ipfs, viem };
++}
++
++function surveyConfig() {
++  return {
++    pool: POOL_ID,
++    id: SURVEY_ID,
++    config: {
++      pkpId: 'pkp-1',
++      pkpDid: 'did:key:pkp1',
++      safe: '0xSafE',
++      queryIds: ['old-query'],
++    },
++    groups: [{ id: 'g1' }],
++  };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  h.clientInstances.length = 0;
++});
++
++describe('SurveyController.create', () => {
++  it('builds an encrypted IPFS config and returns its CID (happy path)', async () => {
++    const deps = fakeDeps();
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++    const body = {
++      signature: 'sig-1',
++      userAddress: '0xUser',
++      surveyConfig: surveyConfig(),
++    };
++
++    const cid = await ctrl.create(body);
++
++    // Delegate pre-steps to shared helpers.
++    expect(stripScoring).toHaveBeenCalledWith(body.surveyConfig);
++    expect(isScored).toHaveBeenCalledWith(body.surveyConfig.groups);
++    expect(createSurveyCollectionSchema).toHaveBeenCalled();
++    expect(createSurveyAggregationQuery).toHaveBeenCalledWith(SURVEY_ID, body.surveyConfig.groups);
++
++    // usage key fetched for the pool.
++    expect(deps.litPoolKeys.get).toHaveBeenCalledWith(POOL_ID);
++
++    // Aggregation query id recorded back onto the config.
++    expect(body.surveyConfig.config.queryIds).toEqual([`query-${SURVEY_ID}`]);
++
++    // Both audience encryptions go through lit, plus the builder-side scoring.
++    expect(deps.lit.encrypt).toHaveBeenCalledTimes(2);
++    expect(deps.nildb.encryptToBuilder).toHaveBeenCalledTimes(1);
++
++    expect(cid).toBe(CID);
++    const uploaded = JSON.parse((deps.ipfs.uploadToPinata as any).mock.calls[0][0]);
++    expect(uploaded.nilDid).toBe('did:key:builder');
++    expect(uploaded.encryptedScoring).toBe('b64-encrypted');
++    expect(uploaded.isScored).toBe(true);
++  });
++});
++
++describe('SurveyController.update', () => {
++  it('re-encrypts and uploads an updated config, returning the CID', async () => {
++    const deps = fakeDeps();
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++    const survey = { id: SURVEY_ID, pool: POOL_ID, groups: [], queryIds: ['q-1'] };
++    const poolConfig = { pkpId: 'pkp-1' };
++
++    const cid = await ctrl.update({ survey, poolConfig });
++
++    expect(deps.litPoolKeys.get).toHaveBeenCalledWith(POOL_ID);
++    expect(deps.lit.encrypt).toHaveBeenCalledTimes(2);
++    expect(deps.nildb.encryptToBuilder).toHaveBeenCalledTimes(1);
++    expect(cid).toBe(CID);
++
++    const uploaded = JSON.parse((deps.ipfs.uploadToPinata as any).mock.calls[0][0]);
++    expect(uploaded.surveyId).toBe(SURVEY_ID);
++    expect(uploaded.poolId).toBe(POOL_ID);
++    expect(uploaded.queryIds).toEqual(['q-1']);
++    expect(uploaded.isScored).toBe(true);
++  });
++});
++
++describe('SurveyController.get', () => {
++  it('fetches on-chain cid + IPFS config and strips the answer key', async () => {
++    const deps = fakeDeps();
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++
++    const result = await ctrl.get(SURVEY_ID);
++
++    expect(deps.viem.read).toHaveBeenCalledWith(
++      expect.any(String),
++      expect.any(Array),
++      'getSurvey',
++      [SURVEY_ID],
++    );
++    expect(deps.ipfs.fetchFromPinata).toHaveBeenCalledWith(CID);
++    expect(result).not.toHaveProperty('encryptedScoring');
++    expect(result).toHaveProperty('title', 'Do you like coffee?');
++    // Normalize/JSON identity check: the rest of the config is preserved.
++    expect(result.id).toBe(SURVEY_ID);
++  });
++
++  it('returns null when no cid is stored on-chain (route maps to 404 NOT_FOUND)', async () => {
++    const deps = fakeDeps();
++    deps.viem.read.mockResolvedValue([null, 0, 0]);
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++
++    const result = await ctrl.get(SURVEY_ID);
++    expect(result).toBeNull();
++    expect(deps.ipfs.fetchFromPinata).not.toHaveBeenCalled();
++  });
++});
++
++describe('SurveyController.score', () => {
++  it('returns the calculated score for an existing respondent', async () => {
++    const deps = fakeDeps();
++    deps.nildb.exists.mockResolvedValue(['doc-1']);
++    deps.nildb.getResponseById.mockResolvedValue({ answer: 'a1' });
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++
++    const score = await ctrl.score(SURVEY_ID, '0xRespondent');
++
++    expect(deps.nildb.decryptFromBuilder).toHaveBeenCalledWith('b64-encrypted');
++    expect(deps.nildb.exists).toHaveBeenCalledWith(SURVEY_ID, '0xRespondent');
++    expect(deps.nildb.getResponseById).toHaveBeenCalledWith(SURVEY_ID, 'doc-1');
++    expect(calculateScore).toHaveBeenCalled();
++    expect(score).toBe(42);
++  });
++
++  it('returns false when the respondent has no stored response (not scored)', async () => {
++    const deps = fakeDeps();
++    deps.nildb.exists.mockResolvedValue(false);
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++
++    const score = await ctrl.score(SURVEY_ID, '0xRespondent');
++    expect(score).toBe(false);
++    expect(deps.nildb.getResponseById).not.toHaveBeenCalled();
++  });
++
++  it('returns null when the survey carries no encrypted answer key (unscored)', async () => {
++    const deps = fakeDeps();
++    deps.ipfs.fetchFromPinata.mockResolvedValue(JSON.stringify({ noKey: true }));
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++
++    const score = await ctrl.score(SURVEY_ID, '0xRespondent');
++    expect(score).toBeNull();
++    expect(deps.nildb.decryptFromBuilder).not.toHaveBeenCalled();
++  });
++});
++
++describe('SurveyController.getUserDelegation', () => {
++  it('fetches the survey and returns a write delegation built by the PKP client', async () => {
++    const deps = fakeDeps();
++    const ctrl = new SurveyController(
++      deps.nildb,
++      deps.lit,
++      deps.litPoolKeys,
++      deps.ipfs,
++      deps.viem,
++    );
++    const poolConfig = { safe: '0xSafE', pkpId: 'pkp-1', pkpDid: 'did:key:pkp1' };
++
++    const result = await ctrl.getUserDelegation(
++      'sig-1',
++      '0xUser',
++      POOL_ID,
++      poolConfig,
++      SURVEY_ID,
++      'did:key:user',
++    );
++
++    expect(deps.litPoolKeys.get).toHaveBeenCalledWith(POOL_ID);
++    expect(fetchSurveyAndParseCid).toHaveBeenCalledWith(
++      { viem: deps.viem, ipfs: deps.ipfs },
++      { address: expect.any(String), abi: expect.any(Array) },
++      SURVEY_ID,
++    );
++
++    // One PKP client was constructed for this pool.
++    expect(h.clientInstances.length).toBe(1);
++    expect(NillionPkpClient).toBeDefined();
++
++    const client = h.clientInstances[0];
++    expect(client.getUserWriteDelegation).toHaveBeenCalledWith(
++      'sig-1',
++      '0xUser',
++      SURVEY_ID,
++      'did:key:user',
++      POOL_ID,
++      'usage-key-1',
++      'pkp-1',
++      'did:key:pkp1',
++    );
++    expect(result).toEqual({ delegation: 'del-1' });
++  });
++});
+diff --git a/nillcc-backend/test/setup.ts b/nillcc-backend/test/setup.ts
+new file mode 100644
+index 000000000..9a2e296f4
+--- /dev/null
++++ b/nillcc-backend/test/setup.ts
+@@ -0,0 +1,17 @@
++// vitest setup — runs before each test file's module graph is imported.
++//
++// The nillcc-backend modules read environment variables at *module load* time:
++//   - NilDBBuilderService reads VITE_NIL_BUILDER_PRIVATE_KEY and VITE_NILDB_NODES
++//     in a top-level const for its config, and `new NilDBBuilderService()` calls
++//     `Signer.fromPrivateKey(...)` in the constructor. Without a valid key this
++//     can throw at construction, so we guarantee a deterministic dev key here.
++//
++// We set explicit, benign values so no real .env / credentials are required and
++// imports never touch the network. Tests may further stub process.env per-case.
++
++process.env.VITE_NIL_BUILDER_PRIVATE_KEY =
++  process.env.VITE_NIL_BUILDER_PRIVATE_KEY ||
++  '0000000000000000000000000000000000000000000000000000000000000001';
++
++process.env.VITE_NILDB_NODES =
++  process.env.VITE_NILDB_NODES || 'https://nildb-stg-n1.nillion.network';
+diff --git a/nillcc-backend/tsconfig.json b/nillcc-backend/tsconfig.json
+index c8ef79fe8..43d549637 100644
+--- a/nillcc-backend/tsconfig.json
++++ b/nillcc-backend/tsconfig.json
+@@ -15,6 +15,6 @@
+     "useUnknownInCatchVariables": false,
+   },
+   "include": ["src/**/*"],
+-  "exclude": ["node_modules", "dist"]
++  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+ }
+ 
+diff --git a/nillcc-backend/vitest.config.ts b/nillcc-backend/vitest.config.ts
+new file mode 100644
+index 000000000..b63df5d3b
+--- /dev/null
++++ b/nillcc-backend/vitest.config.ts
+@@ -0,0 +1,14 @@
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  // Unit/logic tests run in the Node environment. We never pull jsdom — the
++  // browser/network surface (Lit, NilDB, IPFS, Base RPC) is stubbed via
++  // constructor-injected fakes, vi.mock of the unbuilt @s3ntiment/shared
++  // package, and a mocked global fetch instead of real integration.
++  test: {
++    environment: 'node',
++    include: ['src/**/*.test.ts'],
++    setupFiles: ['./test/setup.ts'],
++    reporters: ['default'],
++  },
++});
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 34e057505..0b5e539d7 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -378,6 +378,9 @@ importers:
+       typescript:
+         specifier: ^5.3.3
+         version: 5.9.3
++      vitest:
++        specifier: ^4.1.11
++        version: 4.1.11(@types/node@24.10.14)(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+ 
+   protocol:
+     dependencies:

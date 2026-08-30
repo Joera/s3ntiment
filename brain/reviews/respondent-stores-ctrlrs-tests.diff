@@ -1,0 +1,558 @@
+diff --git a/brain/audits/respondent-stores-ctrlrs-tests-2026-08-28.md b/brain/audits/respondent-stores-ctrlrs-tests-2026-08-28.md
+new file mode 100644
+index 000000000..76459353e
+--- /dev/null
++++ b/brain/audits/respondent-stores-ctrlrs-tests-2026-08-28.md
+@@ -0,0 +1,50 @@
++# Respondent Stores + Controllers Test Tranche — report
++
++**Date:** 2026-08-28
++**Scope:** `@s3ntiment/frontend-respondents` test-only tranche (node env, no jsdom).
++**Branch:** `deepseek/respondent-stores-ctrlrs-tests`
++**Base:** `main` @ `f23d0dfd3` (Merge PR #9 — latest main at branch cut).
++**Mode:** implement (test-only). No production source modified.
++
++## What was added (3 files, +35 `it()` tests → 84 total, up from 49)
++
++| # | Test file | New tests | What it covers |
++|---|-----------|-----------|----------------|
++| 1 | `src/state/stores.test.ts` | 29 | **State-store unit tranche** (the §3 state gaps from the exploration report): `Observable` subscribe/notify/unsubscribe semantics; `storage.slugify` edge cases; `PoolStore.add/remove/set/get` incl. dedupe-by-id, persistence-to-storage, unknown-id no-op; `UserStore.set/persist/clear` incl. empty-update no-op and storage round-trips; `SurveysStore.clear(surveyId)` per-id vs full clear. |
++| 2 | `src/controllers/used-card-ctrlr.test.ts` | 5 | **"Sign in" flow branches** (exploration §4 borderline gap): `authenticate()` true → `router.navigate('/surveys/:id')`; `authenticate()` false → `alert('You did not register…')` + no nav; rejects → propagates (no nav, no alert — honest match of source, which does not try/catch); template wiring + button listener; `destroy()`. |
++| 3 | `src/controllers/survey-ctrlr.test.ts` (+1) | 1 | **Cold-start regression, R1 pool-config gap pinned** (exploration §5 CONFIRMED gap). A fresh controller with **un-seeded** `poolConfig` + store primed with a pool: the shared fetch derefs `poolConfig.pkpId` (replicated in the mock) → throws → lands in `renderWarning`, does **not** navigate, does **not** reach `renderTemplate` (no `survey-questions`, no `survey-complete` listener). Intentionally does **not** pre-seed poolConfig and does **not** fix the gap (deferred to live-env; documented in SPEC Gaps). |
++
++## Approach / decisions
++
++- **Real stores, minimal stubbing.** Store tests instantiate the real `PoolStore`/`UserStore`/`SurveysStore`/`Observable` over the `test/setup.ts` in-memory `localStorage` stub; persistence round-trips are asserted against `load*FromStorage`. No `vi.mock` on the stores → no vacuous passes.
++- **used-card-ctrlr** mocks only `@s3ntiment/shared/components` (top-level custom-element side effect), `../router.js`, and `../auth.factory.js` — the same pattern as `auth-ctrlr.test.ts`; the real `store` is used for the UI view bind. `viem/chains` and the JSON deployment import load natively in node.
++- **Honest branch matching:** the `authenticate()`-rejects case is asserted to *propagate* and do neither nav nor alert, because the source does not try/catch `authenticate`. This matches the source (acceptance: "match source behavior") rather than the scope's shorthand "rejects → alert".
++- **No network / live chain / DOM lib.** Everything runs in the existing node env + `test/setup.ts` globals.
++
++## Gates (exact commands + counts)
++
++```
++$ pnpm --filter frontend-respondents test        # vitest run
++  Test Files  9 passed (9)
++       Tests  84 passed (84)                     # +35 over the prior 49
++
++$ pnpm build                                     # in frontend-respondents
++  ✓ 6980 modules transformed … ✓ built in 42.38s
++```
++
++### Gate-command note (package-name discrepancy)
++The dispatch prompt's gate command used the filter **`@s3ntiment/frontend-respondents`**, but the package's
++actual `package.json` `name` is **`frontend-respondents`** (a pre-existing naming inconsistency vs
++`siblings @s3ntiment/shared`, `@s3ntiment/frontend-organiser`, `@s3ntiment/nillcc-backend`). The
++`@s3ntiment/…` filter matches **no project** and errors (`No projects matched the filters`). The
++working equivalent is `pnpm --filter frontend-respondents test` (same `vitest run`), which is what was
++executed and is reported above. I did **not** rename the package (that would touch production
++`package.json` + `pnpm-lock.yaml` and is out of scope for a test-only tranche); flag for a follow-up.
++
++## Commit
++Single commit on `deepseek/respondent-stores-ctrlrs-tests` (sha below in PR body): three test files only.
++
++## Test-file breakdown (84 total)
++- auth.factory.test.ts 9 · card-class.seam.test.ts 11 · card-signature.seam.test.ts 5 ·
++  card-url.round-trip.test.ts 3 · auth-ctrlr.test.ts 5 · survey-ctrlr.test.ts **8** ·
++  router-entry-gates.test.ts 9 · **used-card-ctrlr.test.ts 5** · **stores.test.ts 29**
+diff --git a/frontend-respondents/src/controllers/survey-ctrlr.test.ts b/frontend-respondents/src/controllers/survey-ctrlr.test.ts
+index e2107f9fb..238e42dc4 100644
+--- a/frontend-respondents/src/controllers/survey-ctrlr.test.ts
++++ b/frontend-respondents/src/controllers/survey-ctrlr.test.ts
+@@ -298,3 +298,55 @@ describe('SurveyController.destroy() / process()', () => {
+     await expect(ctrl.process()).resolves.toBeUndefined();
+   });
+ });
++
++describe('SurveyController cold-start regression (R1 pool-config gap), pinned', () => {
++  // This suite DOCUMENTS the known, intentionally-deferred chicken-and-egg
++  // described in SPEC-frontend-respondents.md Gaps: on a FRESH controller's
++  // first render() `this.poolConfig` is still undefined when forwarded into
++  // fetchAndDecryptSurveyWithRespondent. The real shared fn derefs
++  // `poolConfig.pkpId`, so the first render throws and lands in renderWarning.
++  // We pin that CURRENT behaviour here so it cannot silently change while the
++  // human resolution (source poolConfig before first decrypt) is still pending.
++  // We deliberately do NOT pre-seed (ctrl as any).poolConfig and do NOT fix the
++  // gap — the shared-fn mock below replicates the real deref-on-undefined so the
++  // test exercises the same failure path production would.
++  it('fresh controller + un-seeded poolConfig -> renderWarning, no navigate, no renderTemplate', async () => {
++    primeStore();
++    // Replicate the real shared decrypt fn: it dereferences poolConfig.pkpId,
++    // so an undefined poolConfig throws exactly like production on a fresh
++    // controller's first render.
++    h.decryptImpl.current = (...args: any[]) => {
++      const poolConfig = args[3];
++      if (!poolConfig) {
++        throw new Error("Cannot read properties of undefined (reading 'pkpId')");
++      }
++      return DECRYPTED_SURVEY;
++    };
++    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
++
++    const ctrl = new SurveyController(fakeServices(), SURVEY_ID);
++    // NOTE: intentionally no `(ctrl as any).poolConfig = ...` here — that is
++    // exactly the deferred R1 gap we are pinning.
++    await ctrl.render();
++
++    const app: any = (globalThis as any).document.querySelector('#app');
++
++    // landed in renderWarning, not renderTemplate.
++    expect(app.innerHTML).toContain('Decryption failed');
++    expect(app.innerHTML).not.toContain('survey-questions');
++
++    // fetch attempted with undefined poolConfig (the gap) then rejected
++    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      SURVEY_ID,
++      undefined,
++      undefined,
++    );
++
++    // no navigation and no submission listener were reached
++    expect(router.navigate).not.toHaveBeenCalled();
++    expect((globalThis as any).__surveyGetListener('survey-complete')).toBeUndefined();
++    expect(consoleError).toHaveBeenCalled();
++  });
++});
+diff --git a/frontend-respondents/src/controllers/used-card-ctrlr.test.ts b/frontend-respondents/src/controllers/used-card-ctrlr.test.ts
+new file mode 100644
+index 000000000..eac5a2ac9
+--- /dev/null
++++ b/frontend-respondents/src/controllers/used-card-ctrlr.test.ts
+@@ -0,0 +1,118 @@
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++
++// ---- Mocks (hoisted so the controller's own imports are intercepted before
++// resolution). The shared components barrel is neutralised (it registers
++// custom elements at top level), the router singleton is faked, and the heavy
++// `authenticate` factory is replaced per-test. `store` stays REAL (as in the
++// auth-ctrlr / survey-ctrlr tests) since the controller simply binds a UI view
++// to it; `viem/chains` and the JSON deployment import load natively in node.
++
++vi.mock('@s3ntiment/shared/components', () => ({}));
++vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
++vi.mock('../auth.factory.js', () => ({ authenticate: vi.fn() }));
++
++import { UsedCardController } from './used-card-ctrlr.js';
++import { router } from '../router.js';
++import { authenticate } from '../auth.factory.js';
++
++const SURVEY_ID = 'survey-abc';
++
++// Captures the click handler wired onto the #sign-in-btn element so a test can
++// drive the "Sign in" flow directly.
++function installBrowserGlobals() {
++  const clickHandlers = new Map<string, Function>();
++  // '#app' and the reactive selector '#used-card-content' both resolve to this
++  // element so renderTemplate() builds and binds its view.
++  const appEl: any = { innerHTML: '', style: {} };
++  (globalThis as any).document = {
++    querySelector: () => appEl,
++    getElementById: (id: string) => ({
++      addEventListener: (type: string, cb: Function) => void clickHandlers.set(type, cb),
++    }),
++  };
++  (globalThis as any).window = { location: { href: '' } };
++  (globalThis as any).alert = vi.fn();
++  (globalThis as any).__usedCardGetClick = (type: string) => clickHandlers.get(type);
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  installBrowserGlobals();
++});
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++});
++
++describe('UsedCardController — "Sign in" flow', () => {
++  it('renders the used-card template and wires the sign-in button', async () => {
++    const ctrl = new UsedCardController({} as any, SURVEY_ID);
++
++    await ctrl.render();
++
++    // the sign-in button received a click listener
++    expect((globalThis as any).__usedCardGetClick('click')).toBeDefined();
++    // a reactive view was bound to the UI store
++    expect((ctrl as any).reactiveViews.length).toBe(1);
++  });
++
++  it('navigates to the survey route when authenticate() succeeds', async () => {
++    (authenticate as any).mockResolvedValue(true);
++
++    const ctrl = new UsedCardController({} as any, SURVEY_ID);
++    await ctrl.render();
++
++    const click = (globalThis as any).__usedCardGetClick('click');
++    await click();
++
++    expect(authenticate).toHaveBeenCalledTimes(1);
++    expect(authenticate).toHaveBeenCalledWith(expect.anything(), SURVEY_ID);
++    expect(router.navigate).toHaveBeenCalledTimes(1);
++    expect(router.navigate).toHaveBeenCalledWith(`/surveys/${SURVEY_ID}`);
++    expect((globalThis as any).alert).not.toHaveBeenCalled();
++  });
++
++  it('alerts and does not navigate when authenticate() returns false', async () => {
++    (authenticate as any).mockResolvedValue(false);
++
++    const ctrl = new UsedCardController({} as any, SURVEY_ID);
++    await ctrl.render();
++
++    const click = (globalThis as any).__usedCardGetClick('click');
++    await click();
++
++    expect((globalThis as any).alert).toHaveBeenCalledWith(
++      'You did not register for this survey'
++    );
++    expect(router.navigate).not.toHaveBeenCalled();
++  });
++
++  it('propagates a reject from authenticate() without navigating or alerting', async () => {
++    // The controller does not try/catch authenticate(), so a rejected promise
++    // propagates rather than falling through to the alert branch — asserting
++    // the honest source behaviour.
++    (authenticate as any).mockRejectedValue(new Error('auth blew up'));
++
++    const ctrl = new UsedCardController({} as any, SURVEY_ID);
++    await ctrl.render();
++
++    const click = (globalThis as any).__usedCardGetClick('click');
++
++    await expect(click()).rejects.toThrow('auth blew up');
++    expect(router.navigate).not.toHaveBeenCalled();
++    expect((globalThis as any).alert).not.toHaveBeenCalled();
++  });
++
++  it('destroy() clears every bound reactive view', async () => {
++    const ctrl = new UsedCardController({} as any, SURVEY_ID);
++    const viewA = { destroy: vi.fn() };
++    const viewB = { destroy: vi.fn() };
++    (ctrl as any).reactiveViews.push(viewA, viewB);
++
++    ctrl.destroy();
++
++    expect(viewA.destroy).toHaveBeenCalledTimes(1);
++    expect(viewB.destroy).toHaveBeenCalledTimes(1);
++    expect((ctrl as any).reactiveViews).toEqual([]);
++  });
++});
+diff --git a/frontend-respondents/src/state/stores.test.ts b/frontend-respondents/src/state/stores.test.ts
+new file mode 100644
+index 000000000..6492773a7
+--- /dev/null
++++ b/frontend-respondents/src/state/stores.test.ts
+@@ -0,0 +1,312 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { Observable } from './observable.js';
++import { PoolStore } from './pool.store.js';
++import { UserStore } from './user.store.js';
++import { SurveysStore } from './surveys.store.js';
++import {
++  slugify,
++  loadPoolsFromStorage,
++  savePoolsToStorage,
++  loadUserFromStorage,
++  saveUserToStorage,
++} from './storage.js';
++import type { Pool } from '@s3ntiment/shared';
++
++// ---- Fixtures ---------------------------------------------------------------
++
++function makePool(overrides: Partial<Pool> = {}): Pool {
++  return {
++    id: 'pool-1',
++    name: 'Exhibition Cohort',
++    safeAddress: '0x00000000000000000000000000000000000000aa',
++    batches: ['b1'],
++    createdAt: 1724800000,
++    config: { pkpId: '0xpkp1', pkpDid: 'did:pkp:1' },
++    ...overrides,
++  };
++}
++
++const POOL_A = makePool();
++const POOL_B = makePool({
++  id: 'pool-2',
++  name: 'Members Cohort',
++  safeAddress: '0x00000000000000000000000000000000000000bb',
++});
++
++// -----------------------------------------------------------------------------
++
++describe('Observable — subscribe / notify semantics', () => {
++  it('get() returns the initial value and set() replaces it', () => {
++    const obs = new Observable<number>(1);
++    expect(obs.get()).toBe(1);
++    obs.set(2);
++    expect(obs.get()).toBe(2);
++  });
++
++  it('update() derives the next value from the current one', () => {
++    const obs = new Observable<{ n: number }>({ n: 1 });
++    obs.update((c) => ({ n: c.n + 1 }));
++    expect(obs.get()).toEqual({ n: 2 });
++  });
++
++  it('notifies every subscribed listener with the new value on set', () => {
++    const obs = new Observable<string>('a');
++    const l1 = vi.fn();
++    const l2 = vi.fn();
++    obs.subscribe(l1);
++    obs.subscribe(l2);
++
++    obs.set('b');
++
++    expect(l1).toHaveBeenCalledOnce();
++    expect(l1).toHaveBeenCalledWith('b');
++    expect(l2).toHaveBeenCalledWith('b');
++  });
++
++  it('does not call listeners on subscribe(); only on mutations', () => {
++    const obs = new Observable<number>(0);
++    const listener = vi.fn();
++    obs.subscribe(listener);
++    expect(listener).not.toHaveBeenCalled();
++
++    obs.update((n) => n + 1);
++    expect(listener).toHaveBeenCalledOnce();
++  });
++
++  it('the unsubscribe fn returned by subscribe() stops further notifications', () => {
++    const obs = new Observable<number>(0);
++    const listener = vi.fn();
++    const unsubscribe = obs.subscribe(listener);
++
++    obs.set(1);
++    expect(listener).toHaveBeenCalledTimes(1);
++
++    unsubscribe();
++    obs.set(2);
++    expect(listener).toHaveBeenCalledTimes(1); // no further calls after unsubscribe
++
++    // A listener removed once is truly gone — re-subscribing yields a second slot.
++    const l2 = vi.fn();
++    obs.subscribe(l2);
++    obs.set(3);
++    expect(l2).toHaveBeenCalledTimes(1);
++  });
++});
++
++describe('storage.slugify', () => {
++  it('lower-cases and trims surrounding whitespace', () => {
++    expect(slugify('  Hello World  ')).toBe('hello-world');
++  });
++
++  it('strips non-word characters (punctuation/symbols)', () => {
++    expect(slugify('Hello, World!')).toBe('hello-world');
++  });
++
++  it('collapses whitespace, underscores and hyphens into a single hyphen', () => {
++    expect(slugify('a  b_c--d')).toBe('a-b-c-d');
++  });
++
++  it('trims leading and trailing hyphens', () => {
++    expect(slugify('--hello world--')).toBe('hello-world');
++  });
++
++  it('is a no-op for an already-slug-clean string', () => {
++    expect(slugify('already-clean')).toBe('already-clean');
++  });
++
++  it('handles a fully-punctuated string without producing a lone hyphen', () => {
++    expect(slugify('!!! @@@ ###')).toBe('');
++  });
++});
++
++describe('PoolStore — add / remove / set / get', () => {
++  beforeEach(() => {
++    (globalThis as any).localStorage.clear();
++  });
++
++  it('starts empty when storage holds no pools', () => {
++    const ps = new PoolStore();
++    expect(ps.all).toEqual([]);
++    expect(ps.get('pool-1')).toBeUndefined();
++  });
++
++  it('loads existing pools from storage into a fresh instance', () => {
++    savePoolsToStorage({ [POOL_A.id]: POOL_A });
++    const ps = new PoolStore();
++    expect(ps.all).toEqual([POOL_A]);
++  });
++
++  it('add() appends a new pool and persists it to storage', () => {
++    const ps = new PoolStore();
++    ps.add(POOL_A);
++
++    expect(ps.get('pool-1')).toEqual(POOL_A);
++    // the observable subscriber wrote the pool map back to localStorage
++    expect(loadPoolsFromStorage()['pool-1']).toEqual(POOL_A);
++  });
++
++  it('add() replaces an existing pool with the same id instead of duplicating', () => {
++    const ps = new PoolStore();
++    ps.add(POOL_A);
++    const renamed = makePool({ name: 'Renamed Cohort' });
++    ps.add(renamed);
++
++    expect(ps.all).toHaveLength(1);
++    expect(ps.get('pool-1')?.name).toBe('Renamed Cohort');
++  });
++
++  it('add() notifies subscribers and set() replaces the entire list', () => {
++    const ps = new PoolStore();
++    const listener = vi.fn();
++    ps.subscribe(listener);
++
++    ps.add(POOL_A);
++    expect(listener).toHaveBeenCalledTimes(1);
++
++    ps.set([POOL_B]);
++    expect(ps.all).toEqual([POOL_B]);
++    expect(listener).toHaveBeenCalledTimes(2);
++  });
++
++  it('remove() drops a pool by id and persists the result', () => {
++    const ps = new PoolStore();
++    ps.set([POOL_A, POOL_B]);
++    ps.remove('pool-1');
++
++    expect(ps.get('pool-1')).toBeUndefined();
++    expect(ps.all).toEqual([POOL_B]);
++    expect(loadPoolsFromStorage()['pool-1']).toBeUndefined();
++  });
++
++  it('remove() of an unknown id is a no-op that leaves the list unchanged', () => {
++    const ps = new PoolStore();
++    ps.set([POOL_A]);
++    ps.remove('does-not-exist');
++
++    expect(ps.all).toEqual([POOL_A]);
++  });
++
++  it('clear() empties the store and removes the storage key entry', () => {
++    const ps = new PoolStore();
++    ps.set([POOL_A]);
++    ps.clear();
++
++    expect(ps.all).toEqual([]);
++    expect(loadPoolsFromStorage()).toEqual({});
++  });
++});
++
++describe('UserStore — set / persist / clear', () => {
++  beforeEach(() => {
++    (globalThis as any).localStorage.clear();
++  });
++
++  it('starts from stored user data when present', () => {
++    saveUserToStorage({ nullifier: 'n1', batchId: 'b1', address: '0xaa' });
++    const us = new UserStore();
++    expect(us.state).toEqual({ nullifier: 'n1', batchId: 'b1', address: '0xaa' });
++    expect(us.nullifier).toBe('n1');
++    expect(us.batchId).toBe('b1');
++    expect(us.address).toBe('0xaa');
++  });
++
++  it('starts with all-null user when storage is empty', () => {
++    const us = new UserStore();
++    expect(us.state).toEqual({ nullifier: null, batchId: null, address: null });
++  });
++
++  it('set() merges a partial update into the current state', () => {
++    const us = new UserStore();
++    us.set({ nullifier: 'n1' });
++    expect(us.state).toEqual({ nullifier: 'n1', batchId: null, address: null });
++
++    us.set({ batchId: 'b2', address: '0xcc' });
++    expect(us.state).toEqual({ nullifier: 'n1', batchId: 'b2', address: '0xcc' });
++  });
++
++  it('set() with an empty update is a value no-op (state values unchanged)', () => {
++    const us = new UserStore();
++    us.set({ nullifier: 'n1' });
++    const before = us.state;
++
++    us.set({});
++    expect(us.state).toEqual(before); // same values, nothing clobbered
++  });
++
++  it('notifies subscribers on set()', () => {
++    const us = new UserStore();
++    const l = vi.fn();
++    us.subscribe(l);
++    us.set({ address: '0xdd' });
++    expect(l).toHaveBeenCalledTimes(1);
++  });
++
++  it('persist() writes the current state to storage', () => {
++    const us = new UserStore();
++    us.set({ nullifier: 'n9', batchId: 'b9', address: '0x99' });
++    us.persist();
++
++    expect(loadUserFromStorage()).toEqual({
++      nullifier: 'n9',
++      batchId: 'b9',
++      address: '0x99',
++    });
++  });
++
++  it('clear() resets state to nulls and clears the persisted user', () => {
++    const us = new UserStore();
++    us.set({ nullifier: 'n1', batchId: 'b1', address: '0xaa' });
++    us.persist();
++
++    us.clear();
++
++    expect(us.state).toEqual({ nullifier: null, batchId: null, address: null });
++    expect(loadUserFromStorage()).toEqual({
++      nullifier: null,
++      batchId: null,
++      address: null,
++    });
++  });
++});
++
++describe('SurveysStore.clear(surveyId)', () => {
++  beforeEach(() => {
++    (globalThis as any).localStorage.clear();
++  });
++
++  it('clear(surveyId) removes only that survey and persists the rest', () => {
++    const ss = new SurveysStore();
++    ss.setData('s1', { id: 's1', pool: 'pool-1' } as any);
++    ss.setData('s2', { id: 's2', pool: 'pool-2' } as any);
++
++    ss.clear('s1');
++
++    expect(ss.getData('s1')).toBeNull();
++    expect(ss.getData('s2')).not.toBeNull();
++  });
++
++  it('clear(surveyId) on an unknown id is a no-op that keeps all surveys', () => {
++    const ss = new SurveysStore();
++    ss.setData('s1', { id: 's1', pool: 'pool-1' } as any);
++
++    const before = { ...ss.all };
++    ss.clear('does-not-exist');
++
++    expect(ss.getData('s1')).not.toBeNull();
++    expect(ss.all).toEqual(before);
++  });
++
++  it('clear() with no argument empties all surveys, resets active id and clears storage', () => {
++    const ss = new SurveysStore();
++    ss.setData('s1', { id: 's1', pool: 'pool-1' } as any);
++    ss.setActive('s1');
++    expect(ss.activeSurveyId).toBe('s1');
++
++    ss.clear();
++
++    expect(ss.all).toEqual({});
++    expect(ss.activeSurveyId).toBeNull();
++    expect(ss.active).toBeNull();
++    expect((globalThis as any).localStorage.getItem('surveys')).toBeNull();
++  });
++});

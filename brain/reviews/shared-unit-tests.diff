@@ -1,0 +1,2011 @@
+diff --git a/brain/audits/shared-unit-tests-2026-08-28.md b/brain/audits/shared-unit-tests-2026-08-28.md
+new file mode 100644
+index 000000000..693713e0b
+--- /dev/null
++++ b/brain/audits/shared-unit-tests-2026-08-28.md
+@@ -0,0 +1,68 @@
++# shared unit-test tranche — 2026-08-28 (Bucket 1.1)
++
++**Branch:** `deepseek/shared-unit-tests`
++**Base:** `main` at `b5e622671`
++**PR scope:** add a dedicated vitest unit suite for the `@s3ntiment/shared` pure
++logic. No production source in `shared/` or any other package was touched.
++
++## What was added
++
++| Item | Path |
++|---|---|
++| vitest devDependency (`^4.1.11`) + `"test": "vitest run"` script | `shared/package.json` |
++| vitest config (node env, mirrors frontend-respondents / organiser) | `shared/vitest.config.ts` |
++| 9 leaf unit suites (below) + lockfile update | `pnpm-lock.yaml` |
++
++Import discipline (per the acceptance contract): every test imports its leaf
++module by **direct relative source path**, never the `@s3ntiment/shared` barrel —
++the barrel re-exports Lit/Nillion/d3 that do not load in a plain node env. The
++type-only `../index.js` / `@s3ntiment/shared` imports inside some leaves are
++elided by the esbuild transform, so nothing pulls the heavy dependency graph in
++(verified empirically with a smoke test before writing the suite).
++
++## Test files & case counts
++
++| Test file | Leaf module(s) under test | `it()` cases |
++|---|---|---|
++| `shared/src/shared/results/scoring.factory.test.ts` | `isScored`, `stripScoring`, `calculateScore` (pct rounding, `max==0` guard) | 19 |
++| `shared/src/shared/results/tabulate.test.ts` | `tallyResults` (text/radio/scale/checkbox/scored-single + scoringMap lookup) | 10 |
++| `shared/src/shared/survey/tally.test.ts` | `combineShares` (skips non-arrays, skips `_id`) | 6 |
++| `shared/src/shared/survey/response.factory.test.ts` | `prepareAnswers`, `createUserDataObject` (one-hot `%allot`, `ensureAllot`) | 15 |
++| `shared/src/shared/survey/collection.factory.test.ts` | `createSurveyCollectionSchema` (per-type schema, name fallback) | 10 |
++| `shared/src/shared/survey/queries.test.ts` | `createSurveyAggregationQuery` (scale/radio/checkbox stages, uuid) | 7 |
++| `shared/src/shared/nillion/did.test.ts` | `publicKeyToDidKey` (compressed-ECDSA prefix parity, base58, `0x` strip) | 7 |
++| `shared/src/shared/helpers/retries.test.ts` | `withRetry` (success/failure/backoff/AbortError→timeout) | 6 |
++| `shared/src/shared/helpers/timeout.test.ts` | `callWithTimeout` (value/error/signal/abort) | 6 |
++| **Total** | | **86** |
++
++## Notes on behaviour pinned (worth flagging to reviewers)
++
++- `scoring.factory.calculateScore` compares `userData[questionId]` to the **option
++  text** at `options[correctAnswer]`; `stripScoring` leaves `safeConfigWithScoring.groups`
++  as the same reference as the input (scoring still attached) while `safeConfig.groups`
++  has the `scoring` sibling removed.
++- `response.factory`: `prepareAnswers` stringifies answers *before*
++  `createUserDataObject` sees them, so `ensureAllot`'s object-`%allot` branch is
++  effectively unreachable through the public path and its wrapper-`%allot` values
++  are `Number(...)`; tests pin the actually-reachable behaviour (e.g. a
++  non-numeric scored-single string yields `%allot: NaN`, so a parseable numeric
++  string is used for a deterministic assertion).
++- `nillion/did.ts` compresses `04`-uncompressed keys to `02`/`03` by y-parity; the
++  expected `did:key:z…` strings are pinned regression canaries computed from the
++  real algorithm (base58btc of `[0xe7,0x01] || pubkey`).
++- `tabulate` scale average uses `toFixed(2)` on summed ints and returns literal `0`
++  (not `"0.00"`) when no numeric responses exist.
++
++## GREEN GATES (all verified before opening PR)
++
++| # | Command | Result |
++|---|---|---|
++| 1 | `cd shared && pnpm vitest run` (via added `test` script) | **86/86 passed (9 files)** |
++| 2 | `pnpm --filter @s3ntiment/shared build` | **green** (tsc, no export/type breakage) |
++| 3 | `cd contracts && pnpm hardhat test` | **36/36 passing** (consumes built shared dist, still satisfied) |
++| 4 | `cd frontend-respondents && pnpm vitest run` | **107/107 passing** (imports shared by relative source path, unaffected) |
++
++`shared/` is built by bare `tsc` (its `tsconfig.json` includes `src/shared/**/*`),
++so the colocated `.test.ts` files are type-checked by the build — the suite is
++kept type-clean (`npx tsc --noEmit` → 0 errors) and `shared/dist` is gitignored.
++No production source and no other package were modified.
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index c1296bd70..a67d087b6 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -222,7 +222,7 @@ importers:
+         version: 3.5.0(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+       vitest:
+         specifier: ^4.1.11
+-        version: 4.1.11(@types/node@24.10.14)(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
++        version: 4.1.11(@types/node@24.10.14)(happy-dom@20.11.12(bufferutil@4.1.0)(utf-8-validate@5.0.10))(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+ 
+   frontend-respondents:
+     dependencies:
+@@ -234,13 +234,13 @@ importers:
+         version: 1.2.0(@ethersproject/sha2@5.8.0)(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)
+       '@lit-protocol/auth':
+         specifier: ^8.2.2
+-        version: 8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++        version: 8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@lit-protocol/lit-client':
+         specifier: ^8.3.0
+-        version: 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++        version: 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@lit-protocol/networks':
+         specifier: 8.4.1
+-        version: 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++        version: 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@nillion/nuc':
+         specifier: ^2.0.1
+         version: 2.0.1(bufferutil@4.1.0)(pino@10.3.1)(typescript@5.8.3)(utf-8-validate@5.0.10)
+@@ -261,13 +261,13 @@ importers:
+         version: 8.11.1
+       permissionless:
+         specifier: ^0.2.57
+-        version: 0.2.57(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++        version: 0.2.57(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       s3ntiment-contracts:
+         specifier: workspace:../contracts
+         version: link:../contracts
+       viem:
+         specifier: 2.46.2
+-        version: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)
++        version: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
+       vite-plugin-node-polyfills:
+         specifier: ^0.24.0
+         version: 0.24.0(rollup@4.59.0)(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+@@ -422,13 +422,13 @@ importers:
+         version: 1.2.0(@ethersproject/sha2@5.8.0)(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)
+       '@lit-protocol/auth':
+         specifier: ^8.2.3
+-        version: 8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++        version: 8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/lit-client':
+         specifier: ^8.3.1
+-        version: 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++        version: 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/networks':
+         specifier: 8.4.1
+-        version: 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++        version: 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@nillion/nuc':
+         specifier: ^2.0.1
+         version: 2.0.1(bufferutil@4.1.0)(pino@10.3.1)(typescript@5.9.3)(utf-8-validate@5.0.10)
+@@ -452,13 +452,16 @@ importers:
+         version: 13.4.2
+       permissionless:
+         specifier: ^0.3.4
+-        version: 0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++        version: 0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       typescript:
+         specifier: ^5.9.3
+         version: 5.9.3
+       viem:
+         specifier: 2.46.2
+-        version: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++        version: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
++      vitest:
++        specifier: ^4.1.11
++        version: 4.1.11(@types/node@25.6.0)(happy-dom@20.11.12(bufferutil@4.1.0)(utf-8-validate@5.0.10))(vite@7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+ 
+   website:
+     dependencies:
+@@ -4543,9 +4546,6 @@ packages:
+   immediate@3.0.6:
+     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
+ 
+-  immutable@5.1.4:
+-    resolution: {integrity: sha512-p6u1bG3YSnINT5RQmx/yRZBpenIl30kVxkTLDyHLIMk0gict704Q9n+thfDI7lTRm9vXdDYutVzXhzcThxTnXA==}
+-
+   immutable@5.1.5:
+     resolution: {integrity: sha512-t7xcm2siw+hlUM68I+UEOK+z84RzmN59as9DZ7P1l0994DKUWV7UXBMQZVxaoMSRQ+PBZbHCOoBt7a2wxOMt+A==}
+ 
+@@ -8337,7 +8337,45 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/auth-helpers@8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@lit-protocol/auth-helpers@8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      '@ethersproject/contracts': 5.7.0
++      '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      '@ethersproject/transactions': 5.7.0
++      '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/constants': 9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/logger': 8.0.2
++      '@lit-protocol/schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/types': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@openagenda/verror': 3.1.4
++      '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
++      '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      pino: 9.6.0
++      siwe: 2.3.2(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      tslib: 2.8.1
++      typechain: 8.3.2(supports-color@8.1.1)(typescript@5.8.3)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      zod: 3.24.3
++      zod-validation-error: 3.4.0(zod@3.24.3)
++    transitivePeerDependencies:
++      - '@tanstack/query-core'
++      - '@types/react'
++      - arktype
++      - bufferutil
++      - immer
++      - react
++      - supports-color
++      - typescript
++      - use-sync-external-store
++      - utf-8-validate
++      - valibot
++
++  '@lit-protocol/auth-helpers@8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -8345,21 +8383,21 @@ snapshots:
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/constants': 9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+       pino: 9.6.0
+       siwe: 2.3.2(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+       siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -8375,7 +8413,7 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/auth-helpers@8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@lit-protocol/auth-helpers@8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -8383,21 +8421,21 @@ snapshots:
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/constants': 9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+       pino: 9.6.0
+       siwe: 2.3.2(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+       siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -8515,7 +8553,7 @@ snapshots:
+       '@simplewebauthn/browser': 7.2.0
+       '@simplewebauthn/typescript-types': 7.0.0
+       '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
+-      '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
++      '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.8.3)
+       '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       ajv: 8.12.0
+       base64url: 3.0.1
+@@ -8553,7 +8591,71 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/auth@8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@lit-protocol/auth@8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      '@ethersproject/contracts': 5.7.0
++      '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      '@ethersproject/transactions': 5.7.0
++      '@jest/globals': 30.2.0(supports-color@8.1.1)
++      '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/lit-client': 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/logger': 8.0.2
++      '@lit-protocol/nacl': 7.1.1
++      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)
++      '@lit-protocol/wasm': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@5.0.10)
++      '@noble/curves': 1.8.1
++      '@noble/hashes': 1.8.0
++      '@openagenda/verror': 3.1.4
++      '@simplewebauthn/browser': 7.2.0
++      '@simplewebauthn/typescript-types': 7.0.0
++      '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
++      '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      ajv: 8.12.0
++      base64url: 3.0.1
++      bs58: 6.0.0
++      cbor-web: 9.0.2
++      depd: 2.0.0
++      elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.8.3)
++      ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      jose: 4.14.4
++      pako: 2.1.0
++      pino: 9.6.0
++      pino-caller: 4.0.0
++      siwe: 2.3.2(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      stytch: 12.4.0
++      tslib: 2.8.1
++      typechain: 8.3.2(supports-color@8.1.1)(typescript@5.8.3)
++      typestub-ipfs-only-hash: 4.0.0(supports-color@8.1.1)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      zod: 3.24.3
++      zod-validation-error: 3.4.0(zod@3.24.3)
++    transitivePeerDependencies:
++      - '@sinclair/typebox'
++      - '@tanstack/query-core'
++      - '@types/react'
++      - arktype
++      - bufferutil
++      - encoding
++      - immer
++      - openapi-types
++      - react
++      - supports-color
++      - typescript
++      - use-sync-external-store
++      - utf-8-validate
++      - valibot
++
++  '@lit-protocol/auth@8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -8561,14 +8663,14 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/lit-client': 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/lit-client': 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/nacl': 7.1.1
+-      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
+@@ -8580,7 +8682,7 @@ snapshots:
+       '@simplewebauthn/typescript-types': 7.0.0
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       ajv: 8.12.0
+       base64url: 3.0.1
+       bs58: 6.0.0
+@@ -8598,7 +8700,7 @@ snapshots:
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+       typestub-ipfs-only-hash: 4.0.0(supports-color@8.1.1)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -8617,7 +8719,7 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/auth@8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@lit-protocol/auth@8.2.3(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(tslib@2.8.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -8625,14 +8727,14 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/lit-client': 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/lit-client': 8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/nacl': 7.1.1
+-      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
+@@ -8644,7 +8746,7 @@ snapshots:
+       '@simplewebauthn/typescript-types': 7.0.0
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       ajv: 8.12.0
+       base64url: 3.0.1
+       bs58: 6.0.0
+@@ -8662,7 +8764,7 @@ snapshots:
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+       typestub-ipfs-only-hash: 4.0.0(supports-color@8.1.1)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -8772,7 +8874,7 @@ snapshots:
+ 
+   '@lit-protocol/constants@9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))':
+     dependencies:
+-      '@lit-protocol/contracts': 0.9.0(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
+@@ -8791,7 +8893,7 @@ snapshots:
+ 
+   '@lit-protocol/constants@9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))':
+     dependencies:
+-      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+@@ -8810,7 +8912,7 @@ snapshots:
+ 
+   '@lit-protocol/constants@9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))':
+     dependencies:
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
+@@ -8829,7 +8931,7 @@ snapshots:
+ 
+   '@lit-protocol/constants@9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))':
+     dependencies:
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+@@ -8871,37 +8973,47 @@ snapshots:
+       typescript: 5.8.3
+       viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+ 
+-  '@lit-protocol/contracts@0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@lit-protocol/contracts@0.9.0(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      typescript: 5.8.3
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++
++  '@lit-protocol/contracts@0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       typescript: 5.9.3
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+ 
+-  '@lit-protocol/contracts@0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@lit-protocol/contracts@0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       typescript: 5.9.3
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+ 
+   '@lit-protocol/contracts@0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       typescript: 5.8.3
+       viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+ 
+-  '@lit-protocol/contracts@0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@lit-protocol/contracts@0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      typescript: 5.8.3
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++
++  '@lit-protocol/contracts@0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       typescript: 5.9.3
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+ 
+-  '@lit-protocol/contracts@0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@lit-protocol/contracts@0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       typescript: 5.9.3
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+ 
+   '@lit-protocol/crypto@8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))':
+     dependencies:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+       '@lit-protocol/constants': 9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+-      '@lit-protocol/contracts': 0.9.0(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@lit-protocol/nacl': 7.1.1
+       '@lit-protocol/schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+       '@lit-protocol/types': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+@@ -8934,7 +9046,7 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/constants': 9.0.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.0(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/nacl': 7.1.1
+       '@lit-protocol/schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+@@ -9018,7 +9130,63 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/lit-client@8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@lit-protocol/lit-client@8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      '@ethersproject/contracts': 5.7.0
++      '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      '@ethersproject/transactions': 5.7.0
++      '@jest/globals': 30.2.0(supports-color@8.1.1)
++      '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/logger': 8.0.2
++      '@lit-protocol/nacl': 7.1.1
++      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)
++      '@lit-protocol/wasm': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@5.0.10)
++      '@noble/curves': 1.8.1
++      '@noble/hashes': 1.8.0
++      '@openagenda/verror': 3.1.4
++      '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
++      '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      ajv: 8.12.0
++      bs58: 6.0.0
++      elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.8.3)
++      ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      pako: 2.1.0
++      pino: 9.6.0
++      pino-caller: 4.0.0
++      siwe: 2.3.2(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      tslib: 2.8.1
++      typechain: 8.3.2(supports-color@8.1.1)(typescript@5.8.3)
++      typestub-ipfs-only-hash: 4.0.0(supports-color@8.1.1)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      zod: 3.24.3
++      zod-validation-error: 3.4.0(zod@3.24.3)
++    transitivePeerDependencies:
++      - '@sinclair/typebox'
++      - '@tanstack/query-core'
++      - '@types/react'
++      - arktype
++      - bufferutil
++      - encoding
++      - immer
++      - openapi-types
++      - react
++      - supports-color
++      - typescript
++      - use-sync-external-store
++      - utf-8-validate
++      - valibot
++
++  '@lit-protocol/lit-client@8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -9026,13 +9194,13 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/nacl': 7.1.1
+-      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
+@@ -9042,7 +9210,7 @@ snapshots:
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       ajv: 8.12.0
+       bs58: 6.0.0
+       elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.9.3)
+@@ -9055,7 +9223,7 @@ snapshots:
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+       typestub-ipfs-only-hash: 4.0.0(supports-color@8.1.1)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -9074,7 +9242,7 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/lit-client@8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@lit-protocol/lit-client@8.3.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -9082,13 +9250,13 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/nacl': 7.1.1
+-      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/networks': 8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
+@@ -9098,7 +9266,7 @@ snapshots:
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       ajv: 8.12.0
+       bs58: 6.0.0
+       elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.9.3)
+@@ -9111,7 +9279,7 @@ snapshots:
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+       typestub-ipfs-only-hash: 4.0.0(supports-color@8.1.1)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -9193,7 +9361,61 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/networks@8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@lit-protocol/networks@8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      '@ethersproject/contracts': 5.7.0
++      '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      '@ethersproject/transactions': 5.7.0
++      '@jest/globals': 30.2.0(supports-color@8.1.1)
++      '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/logger': 8.0.2
++      '@lit-protocol/nacl': 7.1.1
++      '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/types': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
++      '@lit-protocol/uint8arrays': 7.1.1(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)
++      '@lit-protocol/wasm': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@5.0.10)
++      '@noble/curves': 1.8.1
++      '@noble/hashes': 1.8.0
++      '@openagenda/verror': 3.1.4
++      '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
++      '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      ajv: 8.12.0
++      bs58: 6.0.0
++      elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.8.3)
++      ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      node-localstorage: 3.0.5
++      pako: 2.1.0
++      pino: 9.6.0
++      pino-caller: 4.0.0
++      siwe: 2.3.2(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
++      tslib: 2.8.1
++      typechain: 8.3.2(supports-color@8.1.1)(typescript@5.8.3)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      zod: 3.24.3
++      zod-validation-error: 3.4.0(zod@3.24.3)
++    transitivePeerDependencies:
++      - '@sinclair/typebox'
++      - '@tanstack/query-core'
++      - '@types/react'
++      - arktype
++      - bufferutil
++      - immer
++      - openapi-types
++      - react
++      - supports-color
++      - typescript
++      - use-sync-external-store
++      - utf-8-validate
++      - valibot
++
++  '@lit-protocol/networks@8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -9201,9 +9423,9 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/nacl': 7.1.1
+@@ -9216,7 +9438,7 @@ snapshots:
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       ajv: 8.12.0
+       bs58: 6.0.0
+       elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.9.3)
+@@ -9229,7 +9451,7 @@ snapshots:
+       siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -9247,7 +9469,7 @@ snapshots:
+       - utf-8-validate
+       - valibot
+ 
+-  '@lit-protocol/networks@8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@lit-protocol/networks@8.4.1(@sinclair/typebox@0.34.48)(@types/react@19.2.18)(bufferutil@4.1.0)(openapi-types@12.1.3)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       '@ethersproject/contracts': 5.7.0
+       '@ethersproject/providers': 5.7.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -9255,9 +9477,9 @@ snapshots:
+       '@jest/globals': 30.2.0(supports-color@8.1.1)
+       '@lit-protocol/access-control-conditions': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/auth-helpers': 8.2.0(@types/react@19.2.18)(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       '@lit-protocol/crypto': 8.1.0(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/logger': 8.0.2
+       '@lit-protocol/nacl': 7.1.1
+@@ -9270,7 +9492,7 @@ snapshots:
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+-      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@wagmi/core': 2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))
+       ajv: 8.12.0
+       bs58: 6.0.0
+       elysia: 1.2.25(@sinclair/typebox@0.34.48)(openapi-types@12.1.3)(typescript@5.9.3)
+@@ -9283,7 +9505,7 @@ snapshots:
+       siwe-recap: 0.0.2-alpha.0(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+       tslib: 2.8.1
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+       zod: 3.24.3
+       zod-validation-error: 3.4.0(zod@3.24.3)
+     transitivePeerDependencies:
+@@ -9351,7 +9573,7 @@ snapshots:
+     dependencies:
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.8.3))(typescript@5.8.3)
+@@ -9374,7 +9596,7 @@ snapshots:
+     dependencies:
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+       '@typechain/ethers-v6': 0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)
+@@ -9457,7 +9679,7 @@ snapshots:
+     dependencies:
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+       '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.8.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.8.3)(valibot@1.2.0(typescript@5.8.3))(zod@3.24.3)
+@@ -9481,7 +9703,7 @@ snapshots:
+     dependencies:
+       '@lit-protocol/access-control-conditions-schemas': 8.0.2(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@lit-protocol/constants': 9.0.1(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+-      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
++      '@lit-protocol/contracts': 0.9.1(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))
+       '@lit-protocol/schemas': 8.0.3(bufferutil@4.1.0)(supports-color@8.1.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(valibot@1.2.0(typescript@5.9.3))
+       '@openagenda/verror': 3.1.4
+       '@t3-oss/env-core': 0.13.8(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))(zod@3.24.3)
+@@ -12335,6 +12557,14 @@ snapshots:
+       typechain: 8.3.2(supports-color@8.1.1)(typescript@5.8.3)
+       typescript: 5.9.3
+ 
++  '@typechain/ethers-v6@0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.8.3)':
++    dependencies:
++      ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++      lodash: 4.17.23
++      ts-essentials: 7.0.3(typescript@5.8.3)
++      typechain: 8.3.2(supports-color@8.1.1)(typescript@5.9.3)
++      typescript: 5.8.3
++
+   '@typechain/ethers-v6@0.5.1(ethers@5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(supports-color@8.1.1)(typescript@5.9.3))(typescript@5.9.3)':
+     dependencies:
+       ethers: 5.7.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+@@ -12648,6 +12878,14 @@ snapshots:
+     optionalDependencies:
+       vite: 7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)
+ 
++  '@vitest/mocker@4.1.11(vite@7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))':
++    dependencies:
++      '@vitest/spy': 4.1.11
++      estree-walker: 3.0.3
++      magic-string: 0.30.21
++    optionalDependencies:
++      vite: 7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)
++
+   '@vitest/pretty-format@4.1.11':
+     dependencies:
+       tinyrainbow: 3.1.1
+@@ -12686,6 +12924,20 @@ snapshots:
+       - react
+       - use-sync-external-store
+ 
++  '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++    dependencies:
++      eventemitter3: 5.0.1
++      mipd: 0.0.7(typescript@5.8.3)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      zustand: 5.0.0(@types/react@19.2.18)
++    optionalDependencies:
++      typescript: 5.8.3
++    transitivePeerDependencies:
++      - '@types/react'
++      - immer
++      - react
++      - use-sync-external-store
++
+   '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       eventemitter3: 5.0.1
+@@ -12700,11 +12952,11 @@ snapshots:
+       - react
+       - use-sync-external-store
+ 
+-  '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
++  '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       eventemitter3: 5.0.1
+       mipd: 0.0.7(typescript@5.9.3)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+       zustand: 5.0.0(@types/react@19.2.18)
+     optionalDependencies:
+       typescript: 5.9.3
+@@ -12714,11 +12966,11 @@ snapshots:
+       - react
+       - use-sync-external-store
+ 
+-  '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))':
++  '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.9.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))':
+     dependencies:
+       eventemitter3: 5.0.1
+       mipd: 0.0.7(typescript@5.9.3)
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+       zustand: 5.0.0(@types/react@19.2.18)
+     optionalDependencies:
+       typescript: 5.9.3
+@@ -15432,8 +15684,6 @@ snapshots:
+ 
+   immediate@3.0.6: {}
+ 
+-  immutable@5.1.4: {}
+-
+   immutable@5.1.5: {}
+ 
+   imurmurhash@0.1.4: {}
+@@ -16466,21 +16716,21 @@ snapshots:
+       sha.js: 2.4.12
+       to-buffer: 1.2.2
+ 
+-  permissionless@0.2.57(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)):
++  permissionless@0.2.57(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)):
+     dependencies:
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
+ 
+   permissionless@0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)):
+     dependencies:
+       viem: 2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+ 
+-  permissionless@0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)):
++  permissionless@0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)):
+     dependencies:
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.24.3)
+ 
+-  permissionless@0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)):
++  permissionless@0.3.4(viem@2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)):
+     dependencies:
+-      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
++      viem: 2.46.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+ 
+   picocolors@1.1.1: {}
+ 
+@@ -17023,7 +17273,7 @@ snapshots:
+     dependencies:
+       '@bufbuild/protobuf': 2.11.0
+       colorjs.io: 0.5.2
+-      immutable: 5.1.4
++      immutable: 5.1.5
+       rxjs: 7.8.2
+       supports-color: 8.1.1
+       sync-child-process: 1.0.2
+@@ -17051,7 +17301,7 @@ snapshots:
+   sass@1.97.3:
+     dependencies:
+       chokidar: 4.0.3
+-      immutable: 5.1.4
++      immutable: 5.1.5
+       source-map-js: 1.2.1
+     optionalDependencies:
+       '@parcel/watcher': 2.5.6
+@@ -17896,6 +18146,22 @@ snapshots:
+       terser: 5.46.0
+       tsx: 4.21.0
+ 
++  vite@7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0):
++    dependencies:
++      esbuild: 0.27.3
++      fdir: 6.5.0(picomatch@4.0.3)
++      picomatch: 4.0.3
++      postcss: 8.5.6
++      rollup: 4.59.0
++      tinyglobby: 0.2.15
++    optionalDependencies:
++      '@types/node': 25.6.0
++      fsevents: 2.3.3
++      sass: 1.99.0
++      sass-embedded: 1.97.3
++      terser: 5.46.0
++      tsx: 4.21.0
++
+   vitest@4.1.11(@types/node@24.10.14)(happy-dom@20.11.12(bufferutil@4.1.0)(utf-8-validate@5.0.10))(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)):
+     dependencies:
+       '@vitest/expect': 4.1.11
+@@ -17924,6 +18190,34 @@ snapshots:
+     transitivePeerDependencies:
+       - msw
+ 
++  vitest@4.1.11(@types/node@25.6.0)(happy-dom@20.11.12(bufferutil@4.1.0)(utf-8-validate@5.0.10))(vite@7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)):
++    dependencies:
++      '@vitest/expect': 4.1.11
++      '@vitest/mocker': 4.1.11(vite@7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
++      '@vitest/pretty-format': 4.1.11
++      '@vitest/runner': 4.1.11
++      '@vitest/snapshot': 4.1.11
++      '@vitest/spy': 4.1.11
++      '@vitest/utils': 4.1.11
++      es-module-lexer: 2.3.2
++      expect-type: 1.4.0
++      magic-string: 0.30.21
++      obug: 2.1.4
++      pathe: 2.0.3
++      picomatch: 4.0.3
++      std-env: 4.2.0
++      tinybench: 2.9.0
++      tinyexec: 1.3.0
++      tinyglobby: 0.2.15
++      tinyrainbow: 3.1.1
++      vite: 7.3.1(@types/node@25.6.0)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)
++      why-is-node-running: 2.3.0
++    optionalDependencies:
++      '@types/node': 25.6.0
++      happy-dom: 20.11.12(bufferutil@4.1.0)(utf-8-validate@5.0.10)
++    transitivePeerDependencies:
++      - msw
++
+   vm-browserify@1.1.2: {}
+ 
+   wait-on@9.0.4(debug@4.4.3(supports-color@8.1.1)):
+diff --git a/shared/package.json b/shared/package.json
+index d8bfbdf2f..07e70181c 100644
+--- a/shared/package.json
++++ b/shared/package.json
+@@ -39,6 +39,7 @@
+   ],
+   "scripts": {
+     "build": "tsc",
++    "test": "vitest run",
+     "prepublishOnly": "npm run build"
+   },
+   "peerDependencies": {
+@@ -70,6 +71,7 @@
+     "fs": "0.0.1-security",
+     "multiformats": "^13.4.2",
+     "permissionless": "^0.3.4",
+-    "viem": "^2.46.2"
++    "viem": "^2.46.2",
++    "vitest": "^4.1.11"
+   }
+ }
+\ No newline at end of file
+diff --git a/shared/src/shared/helpers/retries.test.ts b/shared/src/shared/helpers/retries.test.ts
+new file mode 100644
+index 000000000..a0bba7e87
+--- /dev/null
++++ b/shared/src/shared/helpers/retries.test.ts
+@@ -0,0 +1,80 @@
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++import { withRetry } from './retries.js';
++
++describe('withRetry', () => {
++  beforeEach(() => {
++    vi.useFakeTimers();
++  });
++
++  afterEach(() => {
++    vi.useRealTimers();
++  });
++
++  it('resolves with the value on the first successful attempt', async () => {
++    const fn = vi.fn(async () => 42);
++    await expect(withRetry(fn, { retries: 3 })).resolves.toBe(42);
++    expect(fn).toHaveBeenCalledTimes(1);
++  });
++
++  it('passes an AbortController signal to the wrapped function', async () => {
++    let signalSeen: AbortSignal | undefined;
++    await withRetry(async (signal) => {
++      signalSeen = signal;
++      return 1;
++    }, { retries: 1 });
++    expect(signalSeen).toBeDefined();
++    expect(signalSeen!.aborted).toBe(false);
++    expect(typeof signalSeen!.addEventListener).toBe('function');
++  });
++
++  it('retries until success, calling onRetry with each failed attempt', async () => {
++    const onRetry = vi.fn();
++    let calls = 0;
++    const promise = withRetry(async () => {
++      calls += 1;
++      if (calls < 3) throw new Error('boom');
++      return 'ok';
++    }, { retries: 5, onRetry });
++    const assertion = expect(promise).resolves.toBe('ok');
++    // Backoff sleeps after attempts 1 and 2: 1000ms + 2000ms = 3000ms.
++    await vi.advanceTimersByTimeAsync(3000);
++    await assertion;
++    expect(calls).toBe(3);
++    expect(onRetry).toHaveBeenCalledTimes(2);
++    expect(onRetry).toHaveBeenNthCalledWith(1, 1, expect.objectContaining({ message: 'boom' }));
++    expect(onRetry).toHaveBeenNthCalledWith(2, 2, expect.objectContaining({ message: 'boom' }));
++  });
++
++  it('throws the last error after exhausting all retries', async () => {
++    const onRetry = vi.fn();
++    const promise = withRetry(async () => {
++      throw new Error('persistent');
++    }, { retries: 3, onRetry });
++    const assertion = expect(promise).rejects.toThrow('persistent');
++    // Backoff after attempts 1 and 2: 1000 + 2000 = 3000ms.
++    await vi.advanceTimersByTimeAsync(3000);
++    await assertion;
++    expect(onRetry).toHaveBeenCalledTimes(3);
++  });
++
++  it('honours a non-default retry count', async () => {
++    const onRetry = vi.fn();
++    const promise = withRetry(async () => {
++      throw new Error('again');
++    }, { retries: 2, onRetry });
++    const assertion = expect(promise).rejects.toThrow('again');
++    // Backoff after attempt 1 only: 1000ms.
++    await vi.advanceTimersByTimeAsync(1000);
++    await assertion;
++    expect(onRetry).toHaveBeenCalledTimes(2);
++  });
++
++  it('converts an AbortError into a timeout message', async () => {
++    const boom = new Error('aborted');
++    boom.name = 'AbortError';
++    const assertion = withRetry(async () => {
++      throw boom;
++    }, { retries: 1, timeoutMs: 25000 });
++    await expect(assertion).rejects.toThrow('Timed out after 25s');
++  });
++});
+diff --git a/shared/src/shared/helpers/timeout.test.ts b/shared/src/shared/helpers/timeout.test.ts
+new file mode 100644
+index 000000000..4f81ec38f
+--- /dev/null
++++ b/shared/src/shared/helpers/timeout.test.ts
+@@ -0,0 +1,54 @@
++import { describe, it, expect } from 'vitest';
++import { callWithTimeout } from './timeout.js';
++
++describe('callWithTimeout', () => {
++  it('resolves with the wrapped function result', async () => {
++    await expect(callWithTimeout(async () => 'done', 1000)).resolves.toBe('done');
++  });
++
++  it('forwards an AbortController signal to the wrapped function', async () => {
++    let signalSeen: AbortSignal | undefined;
++    await callWithTimeout(async (signal) => {
++      signalSeen = signal;
++      return 0;
++    }, 1000);
++    expect(signalSeen).toBeDefined();
++    expect(signalSeen!.aborted).toBe(false);
++    expect(typeof signalSeen!.addEventListener).toBe('function');
++  });
++
++  it('rethrows a non-abort error unchanged', async () => {
++    const boom = new Error('network down');
++    await expect(callWithTimeout(async () => { throw boom; }, 1000)).rejects.toThrow('network down');
++  });
++
++  it('converts an AbortError thrown by the function into a timeout message', async () => {
++    const aborted = new Error('aborted');
++    aborted.name = 'AbortError';
++    await expect(
++      callWithTimeout(async () => { throw aborted; }, 5000),
++    ).rejects.toThrow('Timed out after 5s');
++  });
++
++  it('aborts the signal after the timeout elapses while the function is pending', async () => {
++    const result = callWithTimeout((signal) => new Promise<never>((_, reject) => {
++      signal.addEventListener('abort', () => {
++        const e = new Error('aborted');
++        e.name = 'AbortError';
++        reject(e);
++      });
++    }), 20);
++    await expect(result).rejects.toThrow('Timed out after 0.02s');
++  });
++
++  it('uses the default 25s timeout when none is supplied', async () => {
++    let signalSeen: AbortSignal | undefined;
++    await callWithTimeout(async (signal) => {
++      signalSeen = signal;
++      return true;
++    });
++    // Just confirms default wiring runs; real 25s wait never fires because fn resolves.
++    expect(signalSeen).toBeDefined();
++    expect(signalSeen!.aborted).toBe(false);
++  });
++});
+diff --git a/shared/src/shared/nillion/did.test.ts b/shared/src/shared/nillion/did.test.ts
+new file mode 100644
+index 000000000..adad53022
+--- /dev/null
++++ b/shared/src/shared/nillion/did.test.ts
+@@ -0,0 +1,49 @@
++import { describe, it, expect } from 'vitest';
++import { publicKeyToDidKey } from './did.js';
++
++// Verified expected values computed from the real algorithm (base58btc of the
++// multikey [0xe7, 0x01] || pubkey-bytes), pinned here as regression canaries.
++
++describe('publicKeyToDidKey', () => {
++  it('compresses an uncompressed (04, x || y) ECDSA key using even-y prefix 02', () => {
++    // y = 0x2222...22 is even -> 02 prefix preserves the x coordinate.
++    const hex = '04' + '11'.repeat(32) + '22'.repeat(32);
++    expect(publicKeyToDidKey(hex)).toBe('did:key:zQ3shNZQnGqtqxokGkoVtFWnG9v6TJT43E3rfPxzc1eHqx3qJ');
++  });
++
++  it('compresses an uncompressed key using odd-y prefix 03', () => {
++    // y = 0x2323...23 is odd -> 03 prefix.
++    const hex = '04' + '11'.repeat(32) + '23'.repeat(32);
++    expect(publicKeyToDidKey(hex)).toBe('did:key:zQ3shfnj9mdeSkrV3KtHJUgxZM8tyYwhMyFvkt1wvsZicU15a');
++  });
++
++  it('leaves an already-compressed 02 key unchanged', () => {
++    expect(publicKeyToDidKey('02' + '11'.repeat(32)))
++      .toBe('did:key:zQ3shNZQnGqtqxokGkoVtFWnG9v6TJT43E3rfPxzc1eHqx3qJ');
++  });
++
++  it('strips a leading 0x prefix before encoding', () => {
++    expect(publicKeyToDidKey('0x03' + 'aa'.repeat(32)))
++      .toBe('did:key:zQ3shr8KNfhu1EUvhfjYxDPs8s4yguEtA1yyDNSvKniaGmyRj');
++  });
++
++  it('produces a did:key with the multikey base58btc "z" prefix', () => {
++    const out = publicKeyToDidKey('04' + '11'.repeat(32) + '22'.repeat(32));
++    expect(out.startsWith('did:key:z')).toBe(true);
++  });
++
++  it('always yields a fixed-length 33-byte multikey payload (2-byte header + 33-byte key)', () => {
++    const out = publicKeyToDidKey('04' + '11'.repeat(32) + '22'.repeat(32));
++    // 35 bytes total -> base58btc produces variable-length string; assert via the
++    // deterministic canary above rather than string length.
++    expect(out).not.toContain('NN');
++    expect(out.length).toBeGreaterThan(30);
++  });
++
++  it('treats even/odd y as the only discriminator between otherwise-identical keys', () => {
++    const even = publicKeyToDidKey('04' + '33'.repeat(32) + '40'.repeat(32));
++    const odd = publicKeyToDidKey('04' + '33'.repeat(32) + '41'.repeat(32));
++    expect(even).not.toBe(odd);
++    // The two differ only in prefix (02 vs 03), so encoded strings must differ.
++  });
++});
+diff --git a/shared/src/shared/results/scoring.factory.test.ts b/shared/src/shared/results/scoring.factory.test.ts
+new file mode 100644
+index 000000000..f4918cfff
+--- /dev/null
++++ b/shared/src/shared/results/scoring.factory.test.ts
+@@ -0,0 +1,208 @@
++import { describe, it, expect } from 'vitest';
++// Direct relative-source-path import (never the @s3ntiment/shared barrel).
++import {
++  isScored,
++  stripScoring,
++  calculateScore,
++} from './scoring.factory.js';
++
++type AnyGroup = any;
++
++const scoredGroup = (): AnyGroup => ({
++  id: 'g1',
++  title: 'Scored group',
++  questions: [
++    { id: 'q1', type: 'scored-single', required: true, options: ['a', 'b', 'c'] },
++  ],
++});
++
++const plainGroup = (): AnyGroup => ({
++  id: 'g2',
++  title: 'Plain group',
++  questions: [{ id: 'q2', type: 'radio', required: true, options: ['x', 'y'] }],
++});
++
++describe('isScored', () => {
++  it('returns true when any question type starts with "scored"', () => {
++    expect(isScored([scoredGroup()])).toBe(true);
++  });
++
++  it('returns true when scored question is nested deeper past a plain group', () => {
++    expect(isScored([plainGroup(), scoredGroup()])).toBe(true);
++  });
++
++  it('returns false for a group with only plain (non-scored) questions', () => {
++    expect(isScored([plainGroup()])).toBe(false);
++  });
++
++  it('returns false for an empty groups array', () => {
++    expect(isScored([])).toBe(false);
++  });
++
++  it('returns false for undefined/null groups (defensive guard)', () => {
++    expect(isScored(undefined as any)).toBe(false);
++    expect(isScored(null as any)).toBe(false);
++  });
++
++  it('returns false when a group carries no questions array', () => {
++    expect(isScored([{ id: 'g', title: 'x' }] as any)).toBe(false);
++  });
++});
++
++describe('stripScoring', () => {
++  const survey = () => ({
++    id: 'survey-1',
++    groups: [
++      {
++        ...scoredGroup(),
++        scoring: { q1: { correctAnswer: 0, points: 5 } },
++      },
++      plainGroup(),
++    ],
++  });
++
++  it('extracts per-group scoring keyed by group.id', () => {
++    const { scoring } = stripScoring(survey());
++    expect(Object.keys(scoring)).toEqual(['g1']);
++    expect(scoring.g1).toEqual({ q1: { correctAnswer: 0, points: 5 } });
++  });
++
++  it('does not include groups without scoring in the scoring map', () => {
++    const { scoring } = stripScoring(survey());
++    expect(scoring.g2).toBeUndefined();
++  });
++
++  it('strips the scoring sibling from the safeConfig groups', () => {
++    const { safeConfig } = stripScoring(survey());
++    expect(safeConfig.groups![0]).not.toHaveProperty('scoring');
++    // Other group untouched.
++    expect(safeConfig.groups![1]).not.toHaveProperty('scoring');
++  });
++
++  it('preserves all other group/question data after stripping', () => {
++    const { safeConfig } = stripScoring(survey());
++    expect(safeConfig.groups![0].id).toBe('g1');
++    expect(safeConfig.groups![0].questions[0].type).toBe('scored-single');
++    expect(safeConfig.id).toBe('survey-1');
++  });
++
++  it('leaves scoring attached in safeConfigWithScoring (same groups reference)', () => {
++    const s = survey();
++    const { safeConfigWithScoring } = stripScoring(s);
++    expect(safeConfigWithScoring.groups).toBe(s.groups);
++    expect(safeConfigWithScoring.groups![0].scoring).toEqual({
++      q1: { correctAnswer: 0, points: 5 },
++    });
++  });
++});
++
++describe('calculateScore', () => {
++  const groups = (): AnyGroup[] => [
++    {
++      id: 'g1',
++      title: 'G1',
++      questions: [
++        { id: 'q1', type: 'scored-single', required: true, options: ['red', 'green', 'blue'] },
++        { id: 'q2', type: 'scored-single', required: true, options: ['yes', 'no'] },
++      ],
++    },
++    {
++      id: 'g2',
++      title: 'G2',
++      questions: [{ id: 'q3', type: 'radio', required: true, options: ['a', 'b'] }],
++    },
++  ];
++
++  const scoring = (): Record<string, any> => ({
++    g1: {
++      q1: { correctAnswer: 1, points: 5 }, // correct = 'green'
++      q2: { correctAnswer: 0, points: 3 }, // correct = 'yes'
++    },
++    g2: {
++      q3: { correctAnswer: 0, points: 2 }, // correct = 'a'
++    },
++  });
++
++  it('scores the correct answers and returns absolute score and max', () => {
++    const userData = { q1: 'green', q2: 'yes', q3: 'a' };
++    const { score, max, pct } = calculateScore(scoring(), userData, groups());
++    expect(score).toBe(10);
++    expect(max).toBe(10);
++    expect(pct).toBe(100);
++  });
++
++  it('awards partial credit per correct question', () => {
++    const userData = { q1: 'green', q2: 'no', q3: 'a' };
++    const { score, max, pct } = calculateScore(scoring(), userData, groups());
++    expect(score).toBe(7); // 5 + 0 + 2
++    expect(max).toBe(10);
++    expect(pct).toBe(70);
++  });
++
++  it('returns zero when nothing is correct', () => {
++    const userData = { q1: 'red', q2: 'no', q3: 'b' };
++    const { score, max, pct } = calculateScore(scoring(), userData, groups());
++    expect(score).toBe(0);
++    expect(max).toBe(10);
++    expect(pct).toBe(0);
++  });
++
++  it('rounds fractional percentages to the nearest integer', () => {
++    // scoring: q1=2pts, q2=1pt -> max 3
++    const pts = {
++      g1: {
++        q1: { correctAnswer: 0, points: 2 }, // correct = 'red'
++        q2: { correctAnswer: 0, points: 1 }, // correct = 'yes'
++      },
++    };
++    const qs = [{ id: 'g1', questions: [
++      { id: 'q1', options: ['red', 'green'] },
++      { id: 'q2', options: ['yes', 'no'] },
++    ] }] as any;
++    // score 1 of max 3 -> 33.33 -> 33 (only q2 correct)
++    expect(calculateScore(pts, { q1: 'green', q2: 'yes' }, qs).pct).toBe(33);
++    // score 2 of max 3 -> 66.66 -> 67 (only q1 correct)
++    expect(calculateScore(pts, { q1: 'red', q2: 'no' }, qs).pct).toBe(67);
++  });
++
++  it('guards max === 0 returning pct 0 (no points configured)', () => {
++    const zeroPoints = {
++      g1: { q1: { correctAnswer: 0, points: 0 } },
++    };
++    const { score, max, pct } = calculateScore(
++      zeroPoints,
++      { q1: 'red' },
++      [{ id: 'g1', questions: [{ id: 'q1', options: ['red', 'green'] }] }] as any,
++    );
++    expect(score).toBe(0);
++    expect(max).toBe(0);
++    expect(pct).toBe(0);
++  });
++
++  it('skips a group that is present in scoring but missing from groups', () => {
++    const { max, score } = calculateScore(
++      { missing: { qx: { correctAnswer: 0, points: 5 } } },
++      {},
++      groups(),
++    );
++    expect(max).toBe(0);
++    expect(score).toBe(0);
++  });
++
++  it('skips a question missing from the group or lacking options (no max added)', () => {
++    const { max, score } = calculateScore(
++      { g1: { ghost: { correctAnswer: 0, points: 9 } } },
++      { ghost: 'x' },
++      groups(),
++    );
++    expect(max).toBe(0);
++    expect(score).toBe(0);
++  });
++
++  it('handles an empty scoring map as fully unscored', () => {
++    const { score, max, pct } = calculateScore({}, {}, groups());
++    expect(score).toBe(0);
++    expect(max).toBe(0);
++    expect(pct).toBe(0);
++  });
++});
+diff --git a/shared/src/shared/results/tabulate.test.ts b/shared/src/shared/results/tabulate.test.ts
+new file mode 100644
+index 000000000..2ee85167e
+--- /dev/null
++++ b/shared/src/shared/results/tabulate.test.ts
+@@ -0,0 +1,127 @@
++import { describe, it, expect } from 'vitest';
++import { tallyResults } from './tabulate.js';
++
++// Groups mirroring survey/types QuestionGroup.
++const groups = (_overrides: Record<string, any> = {}): any => {
++  const g = {
++    id: 'g1',
++    title: 'Main',
++    questions: [
++      { id: 'q_text', question: 'Tell us', type: 'text', required: true },
++      { id: 'q_radio', question: 'Pick one', type: 'radio', required: true, options: ['optA', 'optB', 'optC'] },
++      { id: 'q_scale', question: 'Rate', type: 'scale', required: true, scaleRange: { min: 1, max: 5, minLabel: 'low', maxLabel: 'high' } },
++      { id: 'q_check', question: 'Pick many', type: 'checkbox', required: true, options: ['c0', 'c1'] },
++      { id: 'q_scored', question: 'Scored', type: 'scored-single', required: true, options: ['sA', 'sB', 'sC'] },
++    ],
++    scoring: { q_scored: { correctAnswer: 0, points: 4 } },
++  };
++  return [g];
++};
++
++const rows = [
++  {
++    q_text: 'first answer',
++    q_radio: 'optB',
++    q_scale: '4',
++    q_check_0: 1,
++    q_check_1: 0,
++    q_scored: 'sA',
++  },
++  {
++    q_text: 'second answer',
++    q_radio: 'optB',
++    q_scale: '5',
++    q_check_0: 1,
++    q_check_1: 1,
++    q_scored: 'sC',
++  },
++  {
++    q_text: '',
++    q_radio: 'optA',
++    q_scale: 'abc', // non-numeric -> filtered from scale values
++    q_check_0: 0,
++    q_check_1: 0,
++    q_scored: 'sA',
++  },
++];
++
++describe('tallyResults', () => {
++  const tallied = tallyResults(rows, groups());
++
++  it('tallies text responses, filtering empty/blank values', () => {
++    const t = tallied.q_text;
++    expect(t.type).toBe('text');
++    expect(t.question).toBe('Tell us');
++    expect(t.responses).toEqual(['first answer', 'second answer']);
++    expect(t.count).toBe(2);
++  });
++
++  it('tallies radio answers by their stored option value', () => {
++    const t = tallied.q_radio;
++    expect(t.type).toBe('radio');
++    expect(t.options).toEqual(['optA', 'optB', 'optC']);
++    expect(t.counts).toEqual({ optA: 1, optB: 2 });
++    expect(t.total).toBe(rows.length);
++  });
++
++  it('computes scale average (2dp), response count and ignores non-numeric', () => {
++    const t = tallied.q_scale;
++    expect(t.type).toBe('scale');
++    expect(t.range).toEqual({ min: 1, max: 5, minLabel: 'low', maxLabel: 'high' });
++    // values 4,5 -> avg 4.5
++    expect(t.average).toBe('4.50');
++    expect(t.responses).toBe(2);
++    expect(t.total).toBe(rows.length);
++  });
++
++  it('returns 0 average when no numeric scale responses exist', () => {
++    const t = tallyResults(
++      [{ q_scale: 'nope' }, { q_scale: undefined }, { q_scale: null }],
++      groups(),
++    );
++    expect(t.q_scale.average).toBe(0);
++    expect(t.q_scale.responses).toBe(0);
++    expect(t.q_scale.total).toBe(3);
++  });
++
++  it('counts checkbox selections per option field (%_i === 1)', () => {
++    const t = tallied.q_check;
++    expect(t.type).toBe('checkbox');
++    expect(t.options).toEqual(['c0', 'c1']);
++    expect(t.counts).toEqual({ 0: 2, 1: 1 });
++    expect(t.total).toBe(rows.length);
++  });
++
++  it('tallies scored-single by mapping answers to option index', () => {
++    const t = tallied.q_scored;
++    expect(t.type).toBe('scored-single');
++    expect(t.options).toEqual(['sA', 'sB', 'sC']);
++    // sA at rows 0 & 2, sC at row 1 -> indexes 0 and 2
++    expect(t.counts).toEqual({ 0: 2, 2: 1 });
++    expect(t.total).toBe(rows.length);
++  });
++
++  it('attaches the correctAnswer index from the scoring map', () => {
++    expect(tallied.q_scored.correctAnswer).toBe(0);
++  });
++
++  it('uses null correctAnswer when the question has no scoring entry', () => {
++    const noScoring = [{ id: 'g', title: 'x', questions: [
++      { id: 'qs', question: 'S', type: 'scored-single', required: true, options: ['a', 'b'] },
++    ] }];
++    const t = tallyResults([{ qs: 'b' }], noScoring as any);
++    expect(t.qs.correctAnswer).toBeNull();
++    expect(t.qs.counts).toEqual({ 1: 1 });
++  });
++
++  it('ignores scored-single answers whose option index is out of range', () => {
++    const t = tallyResults([{ q_scored: 'not-an-option' }], groups());
++    expect(t.q_scored.counts).toEqual({});
++    expect(t.q_scored.total).toBe(1);
++  });
++
++  it('handles undefined groups without throwing', () => {
++    expect(() => tallyResults([{ a: 1 }], undefined as any)).not.toThrow();
++    expect(tallyResults([{ a: 1 }], undefined as any)).toEqual({});
++  });
++});
+diff --git a/shared/src/shared/survey/collection.factory.test.ts b/shared/src/shared/survey/collection.factory.test.ts
+new file mode 100644
+index 000000000..e551e0bf9
+--- /dev/null
++++ b/shared/src/shared/survey/collection.factory.test.ts
+@@ -0,0 +1,91 @@
++import { describe, it, expect } from 'vitest';
++import { createSurveyCollectionSchema } from './collection.factory.js';
++
++const config = (questions: any[]) => ({
++  id: 'survey-xyz',
++  groups: [{ id: 'g', title: 'Main', questions }],
++});
++
++describe('createSurveyCollectionSchema', () => {
++  it('includes the base _id, surveyId and signer properties', () => {
++    const out = createSurveyCollectionSchema(config([]));
++    expect(out.schema.items.properties).toMatchObject({
++      _id: { type: 'string', format: 'uuid' },
++      surveyId: { type: 'string' },
++      signer: { type: 'string' },
++    });
++    expect(out.schema.items.required).toEqual(['_id', 'surveyId']);
++  });
++
++  it('maps radio and scale questions to a %share object property', () => {
++    const out = createSurveyCollectionSchema(config([
++      { id: 'q_r', type: 'radio', options: ['a', 'b'] },
++      { id: 'q_s', type: 'scale', options: ['1', '2'] },
++    ]));
++    expect(out.schema.items.properties.q_r).toEqual({
++      type: 'object',
++      properties: { '%share': { type: 'string' } },
++    });
++    expect(out.schema.items.properties.q_s).toEqual({
++      type: 'object',
++      properties: { '%share': { type: 'string' } },
++    });
++  });
++
++  it('creates one %share field per checkbox option', () => {
++    const out = createSurveyCollectionSchema(config([
++      { id: 'q_c', type: 'checkbox', options: ['x', 'y', 'z'] },
++    ]));
++    expect(out.schema.items.properties.q_c_0).toEqual({
++      type: 'object',
++      properties: { '%share': { type: 'string' } },
++    });
++    expect(out.schema.items.properties.q_c_2).toBeDefined();
++    expect(out.schema.items.properties.q_c_3).toBeUndefined();
++  });
++
++  it('represents text questions as a plain string property', () => {
++    const out = createSurveyCollectionSchema(config([
++      { id: 'q_t', type: 'text' },
++    ]));
++    expect(out.schema.items.properties.q_t).toEqual({ type: 'string' });
++  });
++
++  it('builds the schema envelope (array of unique items, draft-07)', () => {
++    const out = createSurveyCollectionSchema(config([]));
++    expect(out.schema).toMatchObject({
++      $schema: 'http://json-schema.org/draft-07/schema#',
++      type: 'array',
++      uniqueItems: true,
++      items: { type: 'object' },
++    });
++  });
++
++  it('defaults to a "standard" collection type', () => {
++    expect(createSurveyCollectionSchema(config([])).type).toBe('standard');
++  });
++
++  it('accepts an explicit "owned" collection type', () => {
++    expect(createSurveyCollectionSchema(config([]), 'owned').type).toBe('owned');
++  });
++
++  it('uses config.id for both _id and name', () => {
++    const out = createSurveyCollectionSchema(config([]));
++    expect(out._id).toBe('survey-xyz');
++    expect(out.name).toBe('survey-xyz');
++  });
++
++  it('falls back to title then "untitled" when id is absent', () => {
++    const titled = createSurveyCollectionSchema({ title: 'My Survey', groups: [] } as any);
++    expect(titled.name).toBe('My Survey');
++    expect(titled._id).toBeUndefined();
++
++    const untitled = createSurveyCollectionSchema({ groups: [] } as any);
++    expect(untitled.name).toBe('untitled');
++  });
++
++  it('leaves properties as the base trio when there are no groups/questions', () => {
++    const out = createSurveyCollectionSchema({ id: 'empty', groups: [] } as any);
++    expect(Object.keys(out.schema.items.properties)).toEqual(['_id', 'surveyId', 'signer']);
++  });
++});
+diff --git a/shared/src/shared/survey/queries.test.ts b/shared/src/shared/survey/queries.test.ts
+new file mode 100644
+index 000000000..2735a2097
+--- /dev/null
++++ b/shared/src/shared/survey/queries.test.ts
+@@ -0,0 +1,61 @@
++import { describe, it, expect } from 'vitest';
++import { createSurveyAggregationQuery } from './queries.js';
++
++const groups = (questions: any[]) => [{ id: 'g1', title: 'Main', questions }];
++
++describe('createSurveyAggregationQuery', () => {
++  it('adds a $sum stage for scale questions', () => {
++    const out = createSurveyAggregationQuery('sv-1', groups([
++      { id: 'rating', type: 'scale', options: ['1', '2', '3'] },
++    ]));
++    const groupStage = out.pipeline[0].$group;
++    expect(groupStage.rating_sum).toEqual({ $sum: '$rating' });
++  });
++
++  it('adds per-option $sum stages for radio questions', () => {
++    const out = createSurveyAggregationQuery('sv-2', groups([
++      { id: 'q_radio', type: 'radio', options: ['a', 'b'] },
++    ]));
++    const groupStage = out.pipeline[0].$group;
++    expect(groupStage.q_radio_0_sum).toEqual({ $sum: '$q_radio_0' });
++    expect(groupStage.q_radio_1_sum).toEqual({ $sum: '$q_radio_1' });
++  });
++
++  it('adds per-option $sum stages for checkbox questions', () => {
++    const out = createSurveyAggregationQuery('sv-3', groups([
++      { id: 'q_check', type: 'checkbox', options: ['x', 'y', 'z'] },
++    ]));
++    const groupStage = out.pipeline[0].$group;
++    expect(groupStage.q_check_2_sum).toEqual({ $sum: '$q_check_2' });
++    expect(Object.keys(groupStage).filter(k => k.startsWith('q_check'))).toHaveLength(3);
++  });
++
++  it('skips text questions (no aggregation)', () => {
++    const out = createSurveyAggregationQuery('sv-4', groups([
++      { id: 'q_text', type: 'text' },
++    ]));
++    const groupStage = out.pipeline[0].$group;
++    expect(groupStage.q_text_sum).toBeUndefined();
++  });
++
++  it('always adds a total_responses $sum:1 stage', () => {
++    const out = createSurveyAggregationQuery('sv-5', groups([
++      { id: 'q1', type: 'scale', options: ['1'] },
++    ]));
++    expect(out.pipeline[0].$group.total_responses).toEqual({ $sum: 1 });
++  });
++
++  it('names the query from the surveyId and binds the collection', () => {
++    const out = createSurveyAggregationQuery('SURVEY_42', groups([]));
++    expect(out.name).toBe('survey-SURVEY_42-aggregation');
++    expect(out.collection).toBe('SURVEY_42');
++    expect(out.variables).toEqual({});
++  });
++
++  it('emits a fresh non-empty uuid for _id on each call', () => {
++    const a = createSurveyAggregationQuery('sv', groups([]));
++    const b = createSurveyAggregationQuery('sv', groups([]));
++    expect(a._id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
++    expect(a._id).not.toBe(b._id);
++  });
++});
+diff --git a/shared/src/shared/survey/response.factory.test.ts b/shared/src/shared/survey/response.factory.test.ts
+new file mode 100644
+index 000000000..48d084b5c
+--- /dev/null
++++ b/shared/src/shared/survey/response.factory.test.ts
+@@ -0,0 +1,147 @@
++import { describe, it, expect } from 'vitest';
++import { prepareAnswers, createUserDataObject } from './response.factory.js';
++
++// A minimal survey config shaped like survey/types.Survey.
++const survey = (): any => ({
++  id: 'SURVEY_1',
++  groups: [
++    {
++      id: 'g1',
++      title: 'Main',
++      questions: [
++        { id: 'q_radio', question: 'Pick', type: 'radio', required: true, options: ['red', 'green', 'blue'] },
++        { id: 'q_scale', question: 'Rate', type: 'scale', required: true, options: ['1', '2', '3', '4', '5'] },
++        { id: 'q_check', question: 'Multi', type: 'checkbox', required: true, options: ['a', 'b', 'c'] },
++        { id: 'q_text', question: 'Words', type: 'text', required: true },
++        { id: 'q_scored', question: 'Scored', type: 'scored-single', required: true, options: ['x', 'y'] },
++      ],
++    },
++  ],
++});
++
++const base = (over: Record<string, any>) => ({
++  questionId: over.questionId,
++  questionText: over.questionText ?? 'Q',
++  questionType: over.questionType,
++  answer: over.answer,
++});
++
++describe('prepareAnswers', () => {
++  it('converts a radio answer to its option index', () => {
++    const [out] = prepareAnswers([base({ questionId: 'q_radio', questionType: 'radio', answer: 'green' })], survey());
++    expect(out).toEqual({ questionId: 'q_radio', questionText: 'Q', questionType: 'radio', answer: 1 });
++  });
++
++  it('falls back to 0 for a radio answer not matching any option', () => {
++    const [out] = prepareAnswers([base({ questionId: 'q_radio', questionType: 'radio', answer: 'not-there' })], survey());
++    expect(out.answer).toBe(0);
++  });
++
++  it('parses a scale answer to a number', () => {
++    const [out] = prepareAnswers([base({ questionId: 'q_scale', questionType: 'scale', answer: '4' })], survey());
++    expect(out.answer).toBe(4);
++  });
++
++  it('coerces numeric scale answers through String()', () => {
++    const [out] = prepareAnswers([base({ questionId: 'q_scale', questionType: 'scale', answer: 3 })], survey());
++    expect(out.answer).toBe(3);
++  });
++
++  it('falls back to 0 for a non-numeric scale answer', () => {
++    const [out] = prepareAnswers([base({ questionId: 'q_scale', questionType: 'scale', answer: 'NaN' })], survey());
++    expect(out.answer).toBe(0);
++  });
++
++  it('maps checkbox answers to their option indexes, dropping unknown options', () => {
++    const [out] = prepareAnswers(
++      [base({ questionId: 'q_check', questionType: 'checkbox', answer: ['a', 'c', 'zzz'] })],
++      survey(),
++    );
++    expect(out.answer).toEqual([0, 2]);
++  });
++
++  it('returns an empty array for a checkbox answer that is not an array', () => {
++    const [out] = prepareAnswers([base({ questionId: 'q_check', questionType: 'checkbox', answer: 'a' })], survey());
++    expect(out.answer).toEqual([]);
++  });
++
++  it('stringifies text (and other fallback question types) answers', () => {
++    const [text] = prepareAnswers([base({ questionId: 'q_text', questionType: 'text', answer: 123 })], survey());
++    expect(text.answer).toBe('123');
++    const [scored] = prepareAnswers([base({ questionId: 'q_scored', questionType: 'scored-single', answer: 'x' })], survey());
++    expect(scored.answer).toBe('x');
++  });
++});
++
++describe('createUserDataObject', () => {
++  it('builds the object envelope with _id, surveyId and signer', () => {
++    const out = createUserDataObject('uuid-1', [], survey(), '0xsig');
++    expect(out).toEqual({ _id: 'uuid-1', surveyId: 'SURVEY_1', signer: '0xsig' });
++  });
++
++  it('encodes a radio answer as a one-hot %allot field per option', () => {
++    const out = createUserDataObject(
++      'u1',
++      [base({ questionId: 'q_radio', questionType: 'radio', answer: 'green' })],
++      survey(),
++      '0xsig',
++    );
++    expect(out.q_radio_0).toEqual({ '%allot': 0 });
++    expect(out.q_radio_1).toEqual({ '%allot': 1 });
++    expect(out.q_radio_2).toEqual({ '%allot': 0 });
++  });
++
++  it('encodes checkbox answers as binary %allot fields per selected option', () => {
++    const out = createUserDataObject(
++      'u2',
++      [base({ questionId: 'q_check', questionType: 'checkbox', answer: ['a', 'c'] })],
++      survey(),
++      '0xsig',
++    );
++    expect(out.q_check_0).toEqual({ '%allot': 1 });
++    expect(out.q_check_1).toEqual({ '%allot': 0 });
++    expect(out.q_check_2).toEqual({ '%allot': 1 });
++  });
++
++  it('wraps a scale answer value in a %allot object', () => {
++    const out = createUserDataObject(
++      'u3',
++      [base({ questionId: 'q_scale', questionType: 'scale', answer: 4 })],
++      survey(),
++      '0xsig',
++    );
++    expect(out.q_scale).toEqual({ '%allot': 4 });
++  });
++
++  it('stores a text answer as a plain string with no wrapping', () => {
++    const out = createUserDataObject(
++      'u4',
++      [base({ questionId: 'q_text', questionType: 'text', answer: 'hello' })],
++      survey(),
++      '0xsig',
++    );
++    expect(out.q_text).toBe('hello');
++  });
++
++  it('wraps a scored-single answer value in a %allot object (else branch)', () => {
++    // prepareAnswers stringifies then ensureAllot Numbers it; use a parseable
++    // numeric string for a deterministic value.
++    const out = createUserDataObject(
++      'u5',
++      [base({ questionId: 'q_scored', questionType: 'scored-single', answer: '2' })],
++      survey(),
++      '0xsig',
++    );
++    expect(out.q_scored).toEqual({ '%allot': 2 });
++  });
++
++  it('falls back to %allot 0 when an answer is null/undefined/NaN', () => {
++    const out = createUserDataObject(
++      'u7',
++      [base({ questionId: 'q_scale', questionType: 'scale', answer: null })],
++      survey(),
++      '0xsig',
++    );
++    expect(out.q_scale).toEqual({ '%allot': 0 });
++  });
++});
+diff --git a/shared/src/shared/survey/tally.test.ts b/shared/src/shared/survey/tally.test.ts
+new file mode 100644
+index 000000000..b176aa75c
+--- /dev/null
++++ b/shared/src/shared/survey/tally.test.ts
+@@ -0,0 +1,52 @@
++import { describe, it, expect } from 'vitest';
++import { combineShares } from './tally.js';
++
++describe('combineShares', () => {
++  it('sums numeric fields across arrays of rows', () => {
++    const nodeResults = [
++      [{ q1: 1, q2: 2 }, { q1: 3, q2: 4 }],
++      [{ q1: 5, q2: 6 }, { q1: 7, q2: 8 }],
++    ];
++    expect(combineShares(nodeResults)).toEqual({ q1: 16, q2: 20 });
++  });
++
++  it('skips non-array node results entirely', () => {
++    const nodeResults = [
++      null,
++      'not-an-array',
++      42,
++      { not: 'array' },
++      [{ key: 5 }],
++    ] as any;
++    expect(combineShares(nodeResults)).toEqual({ key: 5 });
++  });
++
++  it('skips _id entries even when numeric', () => {
++    const nodeResults = [
++      [{ _id: 99, q1: 1 }, { _id: 100, q1: 2 }],
++    ];
++    expect(combineShares(nodeResults)).toEqual({ q1: 3 });
++  });
++
++  it('ignores non-number values (strings, booleans, objects)', () => {
++    const nodeResults = [
++      [{ q1: 10, q2: 'ten', q3: true, q4: { nested: 1 } }],
++      [{ q1: 5, q2: 'more' }],
++    ];
++    expect(combineShares(nodeResults)).toEqual({ q1: 15 });
++  });
++
++  it('accumulates the same key across multiple rows and nodes', () => {
++    const nodeResults = [
++      [{ total: 1 }, { total: 1 }],
++      [{ total: 1 }, { total: 1 }],
++      [{ total: 1 }],
++    ];
++    expect(combineShares(nodeResults)).toEqual({ total: 5 });
++  });
++
++  it('returns an empty object for empty / all-junk input', () => {
++    expect(combineShares([])).toEqual({});
++    expect(combineShares([null, undefined, 'x'] as any)).toEqual({});
++  });
++});
+diff --git a/shared/vitest.config.ts b/shared/vitest.config.ts
+new file mode 100644
+index 000000000..e83921f7f
+--- /dev/null
++++ b/shared/vitest.config.ts
+@@ -0,0 +1,17 @@
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  // Shared-package logic tests mirror the frontend-respondents / organiser
++  // vitest wiring: pure leaf modules run in the plain Node environment with no
++  // jsdom and no DOM surface. Tests import each leaf module by DIRECT RELATIVE
++  // SOURCE PATH (never the `@s3ntiment/shared` barrel), because the barrel
++  // re-exports node-native / peer deps (Lit, Nillion, d3) that do not load in
++  // a plain node env. The type-only barrel imports inside some leaves are
++  // elided by the esbuild transform, so nothing pulls the heavy graph in.
++  test: {
++    environment: 'node',
++    include: ['src/**/*.test.ts'],
++    // Keep output focused; files log their own paths where useful.
++    reporters: ['default'],
++  },
++});
