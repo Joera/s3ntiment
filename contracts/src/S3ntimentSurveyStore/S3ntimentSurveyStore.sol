@@ -114,6 +114,13 @@ contract S3ntimentSurveyStore {
     // Pool membership — pool wallet EOA is the member identity
     mapping(string => mapping(address => bool)) private poolMembers;
 
+    // Maintained per-pool registered-member count (panel-size proxy). The
+    // poolMembers mapping above is private and NON-enumerable, so a counter is
+    // kept instead of ever iterating the mapping. Incremented once per
+    // successful registerInPool, decremented in revokeMember (only if the
+    // member was actually a member) and adjusted by net delta in rotateMember.
+    mapping(string => uint256) private poolMemberCounts;
+
     // -------------------------------------------------------------------------
     // Errors
     // -------------------------------------------------------------------------
@@ -475,6 +482,10 @@ contract S3ntimentSurveyStore {
         if (poolWallet == address(0)) revert InvalidMemberAddress();
         if (poolMembers[poolId][poolWallet]) revert AlreadyPoolMember();
         poolMembers[poolId][poolWallet] = true;
+        // Maintain the per-pool counter (alongside batch.cardCount, at the same
+        // commit point). Placed AFTER the AlreadyPoolMember/InvalidMemberAddress
+        // guards, so a reverting registration cannot double-count.
+        poolMemberCounts[poolId]++;
     }
 
     /**
@@ -492,7 +503,13 @@ contract S3ntimentSurveyStore {
      */
     function revokeMember(string memory poolId, address member) external {
         _requirePoolSafe(poolId);
-        poolMembers[poolId][member] = false;
+        // Decrement only if the member was actually a member. revokeMember is
+        // documented idempotent (no-op on a double revoke); gating on the prior
+        // membership state prevents a uint256 underflow or double-decrement.
+        if (poolMembers[poolId][member]) {
+            poolMembers[poolId][member] = false;
+            poolMemberCounts[poolId]--;
+        }
     }
 
     /**
@@ -564,8 +581,22 @@ contract S3ntimentSurveyStore {
 
         // Atomic swap: old leaf out, new leaf in. roll back on any later revert
         // is handled by Solidity; all checks above precede the state writes.
+        // Account for the net membership delta on the counter:
+        //   - oldLeaf is removed (verified a member via NotPoolMember above);
+        //   - newLeaf is added ONLY if it was not already a member.
+        // So swapping to a non-member newLeaf is net-zero, while the Case-2
+        // cleanup path (rotating to an ALREADY-member S) decreases the count by
+        // exactly 1 (oldLeaf dropped, newLeaf stays). A self-rotation
+        // (newLeaf == oldLeaf) leaves the member set unchanged -> count unchanged.
+        bool newLeafAlreadyMember = poolMembers[poolId][newLeaf];
         poolMembers[poolId][oldLeaf] = false;
         poolMembers[poolId][newLeaf] = true;
+        if (oldLeaf != newLeaf) {
+            poolMemberCounts[poolId]--;
+            if (!newLeafAlreadyMember) {
+                poolMemberCounts[poolId]++;
+            }
+        }
         emit Rotated(poolId, oldLeaf, newLeaf);
     }
 
@@ -576,6 +607,20 @@ contract S3ntimentSurveyStore {
      */
     function isPoolMember(string memory poolId, address member) external view returns (bool) {
         return poolMembers[poolId][member];
+    }
+
+    /**
+     * @dev Current registered-member count for a pool (panel-size proxy).
+     *      Backed by the maintained poolMemberCounts counter — the poolMembers
+     *      mapping is private and non-enumerable, so this never enumerates it.
+     *
+     *      Unknown pool -> returns 0 (does NOT revert). This matches the
+     *      data/aggregate getters (getPoolSurveys, getPoolBatches, which return
+     *      empty for an unknown pool) and the isPoolMember default (false),
+     *      rather than getPool's PoolNotFound guard.
+     */
+    function getPoolMemberCount(string memory poolId) external view returns (uint256) {
+        return poolMemberCounts[poolId];
     }
 
     function isNullifierUsed(
