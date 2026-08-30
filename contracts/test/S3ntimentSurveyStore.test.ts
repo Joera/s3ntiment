@@ -1,6 +1,14 @@
 import {expect} from 'earl';
 import {describe, it} from 'node:test';
 import {network} from 'hardhat';
+import {
+	concat,
+	encodeAbiParameters,
+	keccak256,
+	parseAbiParameters,
+	stringToBytes,
+	toBytes,
+} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {signCardMessage} from '@s3ntiment/shared/invites/encoding';
 import {setupSurveyStoreFixtures} from './utils/index.js';
@@ -28,6 +36,44 @@ const {deployAll} = setupSurveyStoreFixtures(provider);
 function createBatchWallet(byte = 'aa') {
 	// Fixed 32-byte private key → deterministic batch-wallet address.
 	return privateKeyToAccount('0x' + byte.repeat(32));
+}
+
+// A fresh deterministic leaf keypair (the member's stealth leaf / old leaf).
+function createLeaf(byte = 'bb') {
+	return privateKeyToAccount('0x' + byte.repeat(32));
+}
+
+// Builds the rotateMember digest + EIP-191 personal-sign signature exactly as
+// S3ntimentSurveyStore.rotateMember does on-chain:
+//   digest = keccak256(abi.encode(poolId, oldLeaf, newLeaf, storeAddress, chainId))
+//   ethSignedHash = keccak256("\x19Ethereum Signed Message:\n32" ++ digest)
+//   signature = account.sign(ethSignedHash)
+// abi.encode (== encodeAbiParameters) is required so it matches the on-chain
+// digest byte-for-byte with two dynamic fields (poolId string).
+async function signRotateMessage(
+	account: ReturnType<typeof privateKeyToAccount>,
+	storeAddress: string,
+	poolId: string,
+	oldLeaf: string,
+	newLeaf: string,
+	chainId: bigint,
+): Promise<`0x${string}`> {
+	const digest = keccak256(
+		encodeAbiParameters(
+			parseAbiParameters('string,address,address,address,uint256'),
+			[
+				poolId,
+				oldLeaf as `0x${string}`,
+				newLeaf as `0x${string}`,
+				storeAddress as `0x${string}`,
+				chainId,
+			],
+		),
+	);
+	const ethSignedHash = keccak256(
+		concat([stringToBytes('\x19Ethereum Signed Message:\n32'), toBytes(digest)]),
+	);
+	return account.sign!({hash: ethSignedHash});
 }
 
 // Local hardhat chain id (EDR-simulated default network) == block.chainid the
@@ -2182,5 +2228,365 @@ describe('S3ntimentSurveyStore', function () {
 				}),
 			).toBeRejectedWith(`custom error 'BatchNotFound()'`);
 		});
+	describe('rotateMember (self-authorizing membership rotation)', function () {
+		// Set up a pool, register `leaf` as a member (via a valid card + SMC whose
+		// owner is the leaf), and return the SMC. Mirrors the registerInPool setup.
+		async function setupLeafMember({
+			env,
+			S3ntimentSurveyStore,
+			safe,
+			poolId,
+			leaf,
+		}) {
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			const surveyId = 'rotate-srv-' + poolId;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: [surveyId, poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(
+				batchWallet,
+				context,
+				'card-rotate-' + poolId,
+				batchAddress,
+			);
+			const smc = await viem.deployContract('MockSMC', [leaf.address]);
+			await smc.write.register([
+				S3ntimentSurveyStore.address,
+				poolId,
+				'card-rotate-' + poolId,
+				batchAddress,
+				signature,
+			]);
+			return {smc, batchAddress};
+		}
+
+		it('rotates a current member to a new leaf (old out, new in)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('11');
+			const newLeaf = createLeaf('22');
+			const poolId = 'pool-rotate-ok';
+			const {smc} = await setupLeafMember({
+				env,
+				S3ntimentSurveyStore,
+				safe,
+				poolId,
+				leaf: oldLeaf,
+			});
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, oldLeaf.address],
+				}),
+			).toEqual(true);
+
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await smc.write.rotate([
+				S3ntimentSurveyStore.address,
+				poolId,
+				newLeaf.address,
+				signature,
+			]);
+
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, oldLeaf.address],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, newLeaf.address],
+				}),
+			).toEqual(true);
+		});
+
+		it('rejects a caller not controlling the old leaf (signature from a different key)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('33');
+			const otherKey = createLeaf('44');
+			const newLeaf = createLeaf('55');
+			const poolId = 'pool-rotate-wrong-signer';
+			const {smc} = await setupLeafMember({
+				env,
+				S3ntimentSurveyStore,
+				safe,
+				poolId,
+				leaf: oldLeaf,
+			});
+
+			// The SMC owner is oldLeaf, but the signature is produced by a DIFFERENT
+			// key (otherKey). The recovered signer != ISMC(msg.sender).owner() ->
+			// InvalidSignature. A holder of any single leaf cannot therefore rotate
+			// a DIFFERENT member's membership away.
+			const signature = await signRotateMessage(
+				otherKey,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					newLeaf.address,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'InvalidSignature()'`);
+
+			// Nothing changed: old leaf still a member, new leaf not.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, oldLeaf.address],
+				}),
+			).toEqual(true);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, newLeaf.address],
+				}),
+			).toEqual(false);
+		});
+
+		it('rejects rotation when the old leaf is not a member (NotPoolMember)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const stranger = createLeaf('66'); // SMC owner, but never registered
+			const newLeaf = createLeaf('77');
+			const poolId = 'pool-rotate-not-member';
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+			const smc = await viem.deployContract('MockSMC', [stranger.address]);
+
+			// Signature is valid and recovers to the SMC owner (stranger), but
+			// stranger is not a member of the pool -> NotPoolMember.
+			const signature = await signRotateMessage(
+				stranger,
+				S3ntimentSurveyStore.address,
+				poolId,
+				stranger.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					newLeaf.address,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'NotPoolMember()'`);
+		});
+
+		it('rejects rotation to a zero newLeaf (InvalidRotationTarget)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('88');
+			const poolId = 'pool-rotate-zero-target';
+			const {smc} = await setupLeafMember({
+				env,
+				S3ntimentSurveyStore,
+				safe,
+				poolId,
+				leaf: oldLeaf,
+			});
+
+			const zeroLeaf = '0x' + '00'.repeat(20);
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				zeroLeaf,
+				CHAIN_ID,
+			);
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					zeroLeaf,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'InvalidRotationTarget()'`);
+		});
+
+		it('blocks replay of a successful rotation (old leaf no longer a member)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('99');
+			const newLeaf = createLeaf('ab');
+			const poolId = 'pool-rotate-replay';
+			const {smc} = await setupLeafMember({
+				env,
+				S3ntimentSurveyStore,
+				safe,
+				poolId,
+				leaf: oldLeaf,
+			});
+
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await smc.write.rotate([
+				S3ntimentSurveyStore.address,
+				poolId,
+				newLeaf.address,
+				signature,
+			]);
+
+			// Same signature replayed — oldLeaf is no longer a member -> NotPoolMember.
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					newLeaf.address,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'NotPoolMember()'`);
+
+			// The swap is stable: new leaf remained the sole member.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, newLeaf.address],
+				}),
+			).toEqual(true);
+		});
+
+		it('rejects a signature bound to a wrong poolId', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('bc');
+			const newLeaf = createLeaf('cd');
+			const poolId = 'pool-rotate-wrong-pool';
+			const {smc} = await setupLeafMember({
+				env,
+				S3ntimentSurveyStore,
+				safe,
+				poolId,
+				leaf: oldLeaf,
+			});
+
+			// signed over a DIFFERENT poolId than the on-chain digest uses -> the
+			// recovered signer will not equal the SMC owner -> InvalidSignature.
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				'wrong-pool-' + poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					newLeaf.address,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'InvalidSignature()'`);
+		});
+
+		it('rejects a signature bound to a wrong chainId', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('de');
+			const newLeaf = createLeaf('ef');
+			const poolId = 'pool-rotate-wrong-chain';
+			const {smc} = await setupLeafMember({
+				env,
+				S3ntimentSurveyStore,
+				safe,
+				poolId,
+				leaf: oldLeaf,
+			});
+
+			// Signed over a bumped chainId -> recovered signer != SMC owner ->
+			// InvalidSignature. Proves the chain binding blocks cross-chain replay.
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID + 1n,
+			);
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					newLeaf.address,
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'InvalidSignature()'`);
+		});
+
+		it('rejects rotation for an unknown pool (PoolNotFound)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const leaf = createLeaf('fa');
+			const poolId = 'pool-rotate-missing';
+			// Create an unrelated pool so the fixture has at least one pool; the
+			// rotation targets an unknown poolId.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s-other', 'pool-other', 'QmCid1', []],
+				account: safe,
+			});
+			const smc = await viem.deployContract('MockSMC', [leaf.address]);
+			const signature = await signRotateMessage(
+				leaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				leaf.address,
+				'0x' + '11'.repeat(20),
+				CHAIN_ID,
+			);
+			await expect(
+				smc.write.rotate([
+					S3ntimentSurveyStore.address,
+					poolId,
+					'0x' + '11'.repeat(20),
+					signature,
+				]),
+			).toBeRejectedWith(`custom error 'PoolNotFound()'`);
+		});
+	});
+
 	});
 });

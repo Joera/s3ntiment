@@ -10,6 +10,12 @@ interface IS3ntimentSurveyStore {
         address batchId,
         bytes calldata signature
     ) external;
+
+    function rotateMember(
+        string calldata poolId,
+        address newLeaf,
+        bytes calldata signature
+    ) external;
 }
 
 /// @title MockSMC
@@ -38,6 +44,19 @@ contract MockSMC {
             poolId,
             nullifier,
             batchId,
+            signature
+        );
+    }
+
+    function rotate(
+        address store,
+        string calldata poolId,
+        address newLeaf,
+        bytes calldata signature
+    ) external {
+        IS3ntimentSurveyStore(store).rotateMember(
+            poolId,
+            newLeaf,
             signature
         );
     }
