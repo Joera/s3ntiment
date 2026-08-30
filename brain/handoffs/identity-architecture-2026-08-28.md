@@ -449,8 +449,10 @@ already-member/self-rotation guards — cosmetically strict, not exploitable).
 `registerInPool` (card/nullifier-bound) could not provide. nilDB `E → S` record migration remains OUT
 of contract scope (separate off-chain half of the rotate, required in the frontend PR per RFC §6).
 
-**NEXT: frontend `/account` PR (#25)** — results CTA gated on `anchor_address === undefined`, `/account`
-route + AccountController (replaces `/secure`), humanWallet.factory key-return refactor, secure flow
-(derive S → `rotateMember` → nilDB E→S migrate → wipe `bootstrapE` → persist S + `anchor_address`),
-Case-2 recover/re-assign (skip registration), storage helpers, tests. Readiness note: **this still
-awaits the human to MERGE PR #24** before the frontend can rely on `rotateMember` on-chain.
+**NEXT/IN-FLIGHT (2026-08-30): frontend `/account` PR** — results CTA gated on `anchor_address === undefined`,
+`/account` route + AccountController (replaces `/secure`), humanWallet.factory key-return refactor, secure
+flow (derive S → `rotateMember` → nilDB E→S migrate → wipe `bootstrapE` → persist S + `anchor_address`),
+Case-2 recover/re-assign, storage helpers, tests. **PR #24 (rotateMember) IS merged** — the first-time
+S-registration gap flagged in the Task 2 explore (which predated rotateMember) is resolved by rotateMember.
+Queued after this: the nilDB-side actual-respondent count (RFC §7.1) and the user's remaining railgun/nihilium
+option definitions.
