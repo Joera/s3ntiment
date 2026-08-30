@@ -236,3 +236,46 @@ member → succeeds (old out, new in); caller not controlling old leaf (differen
 `InvalidSignature`; old leaf not a member → `NotPoolMember`; `newLeaf == 0` → `InvalidRotationTarget`;
 replay after success → `NotPoolMember`; wrong poolId / wrong chainId in digest → `InvalidSignature`;
 unknown pool → `PoolNotFound`.
+
+---
+
+## 11. AMENDMENT (2026-08-30) — `getPoolMemberCount` (per-pool registered-member count)
+
+**Additive.** Exposes a **current registered-member count per pool** without enumerating the private,
+non-enumerable `poolMembers` mapping (audit: `brain/audits/respondent-count-per-pool-2026-08-30.md`).
+A maintained counter keeps the panel-size proxy cheap and O(1).
+
+**Exact addition (zero change to existing selectors/ABI/events):**
+```solidity
+// storage
+mapping(string => uint256) private poolMemberCounts;
+
+// read
+function getPoolMemberCount(string memory poolId) external view returns (uint256);
+```
+
+**Semantics / unknown-pool convention (chosen):**
+- Returns the current registered-member count for `poolId`.
+- **Unknown pool → returns `0` (no revert).** This is the deliberate choice, documented here and in the
+  source doc-comment: it matches the *data/aggregate* getters (`getPoolSurveys`, `getPoolBatches`,
+  which return empty for an unknown pool) and `isPoolMember`'s default (`false`), rather than `getPool`'s
+  `PoolNotFound` guard. A count of zero is a meaningful, non-erroring answer for a pool that has no
+  members; the caller that needs a pool-exists assertion already has `poolExists`.
+
+**Maintenance points (stack-consistent with the audit's notes on `cardCount`):**
+- `registerInPool`: `poolMemberCounts[poolId]++` placed AFTER the `InvalidMemberAddress` /
+  `AlreadyPoolMember` guards, adjacent to the existing `batch.cardCount++` at the same commit point —
+  so a reverting registration cannot double-count.
+- `revokeMember`: decrement ONLY if `poolMembers[poolId][member]` was true before false-setting —
+  keeps the documented idempotent no-op from underflowing / double-decrementing a `uint256`.
+- `rotateMember`: net-delta maintenance. oldLeaf is guaranteed a member (`NotPoolMember` guard), so it
+  is always subtracted; `newLeaf` is added only if it was NOT already a member. Hence rotating to a
+  non-member `newLeaf` is net-zero, and the Case-2 cleanup path (rotating to an already-member `S`)
+  decreases the count by exactly 1. A self-rotation (`newLeaf == oldLeaf`) leaves the count unchanged.
+- No enumeration: no `getPoolMembers` list, no indexing added (scope bound — count only).
+
+**Tests** (in `contracts/test/S3ntimentSurveyStore.test.ts`, additive): fresh/unknown pool → 0;
+count increments once per successful `registerInPool` of distinct leafs; `AlreadyPoolMember` revert does
+not double-increment; `revokeMember` decrements; idempotent revoke does not underflow/double-decrement;
+`rotateMember` to a non-member `newLeaf` → count unchanged; `rotateMember` to an already-member
+`newLeaf` (Case-2 cleanup) → count decreases by 1.

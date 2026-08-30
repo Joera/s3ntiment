@@ -280,3 +280,29 @@ anchor, derive the fresh stealth address, and rotate docs + registration on cont
 - Act in the same turn you announce. Dispatch + hedge-timer in the same turn; then wait for the inbox
   (auto-wake). Never poll with timers; timers are for hedge/re-probe with genuinely-absent reports.
 - All code → sub-agent. This handoff and the RFC are orchestrator-authored docs (fine).
+
+---
+
+## 9.5 — Per-pool registered-member count (2026-08-30)
+
+**Implemented.** Adds `S3ntimentSurveyStore.getPoolMemberCount(poolId)` — a current
+registered-member (panel-size) count read backed by a maintained
+`mapping(string => uint256) poolMemberCounts` counter (the `poolMembers` mapping is private and
+**non-enumerable**, so a counter is kept — enumeration is explicitly out of scope).
+
+**Design intent (grounded in `brain/audits/respondent-count-per-pool-2026-08-30.md`):**
+- `registerInPool` increments the counter exactly once per successful registration, placed AFTER the
+  `InvalidMemberAddress`/`AlreadyPoolMember` guards (at the same commit point as `batch.cardCount`),
+  so a reverting registration can never double-count.
+- `revokeMember` decrements ONLY if the member was actually a member (guard before the write), keeping
+  the documented idempotent no-op from underflowing or double-decrementing the `uint256`.
+- `rotateMember` maintains the count by net delta: swapping to a non-member `newLeaf` is net-zero
+  (old out, new in); the Case-2 cleanup path (rotating to an ALREADY-member `S`) decreases it by 1
+  (oldLeaf dropped, `S` stays). A self-rotation (`newLeaf == oldLeaf`) leaves the count unchanged.
+- Unknown pool → `getPoolMemberCount` returns `0` (no revert), consistent with the data/aggregate
+  getters (`getPoolSurveys`/`getPoolBatches` return empty) and `isPoolMember`'s default, rather than
+  `getPool`'s `PoolNotFound` guard.
+
+**SHIPPED** in PR (branch `deepseek/get-pool-member-count`): contract + tests + method-surface spec
+amendment. Strictly additive (new storage + new function; no existing selector/ABI/event changed).
+Actual respondent count remains nilDB-side (RFC §7.1) as before.
