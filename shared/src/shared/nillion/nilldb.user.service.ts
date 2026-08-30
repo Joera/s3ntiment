@@ -179,6 +179,67 @@ export class NillDBUserService {
         }
     }
 
+    /**
+     * Cross-leaf migration primitive (RFC-001 §11: "record migration helper for
+     * leaf→leaf", delete+recreate ownership move). Lists EVERY owned document the
+     * CURRENTLY init'd leaf holds in a collection, returning its document id plus
+     * the full stored data object — so a caller can capture all records under leaf
+     * E, then re-create them under leaf S (see the /account secure flow's
+     * two-client delete+recreate). Unlike getUserSurveyAnswers (which returns only
+     * the first record's data and drops the document id), this preserves the ids
+     * needed to delete each original after the new leaf owns a copy.
+     *
+     * SAFETY: this method THROWS on a listing failure instead of swallowing the
+     * error as an empty result — the /account migration must distinguish a genuine
+     * "no records" from a transient nilDB/network error, otherwise a false-empty
+     * would let the flow wipe bootstrapE and set anchor_address while real answers
+     * stay stranded under the wiped key (see BLOCKING-2 in the PR #26 review).
+     */
+    async listOwnedBySurvey(surveyId: string): Promise<Array<{ documentId: string; data: any }>> {
+        const dataRefs = await this.user.listDataReferences();
+
+        const surveyDataRefs: any[] = dataRefs.data.filter((ref: any) =>
+            ref.collection === surveyId
+        );
+
+        const records: Array<{ documentId: string; data: any }> = [];
+
+        for (const ref of surveyDataRefs) {
+            const surveyData = await this.user.readData({
+                collection: surveyId,
+                document: ref.document,
+            });
+            records.push({ documentId: ref.document, data: surveyData.data });
+        }
+
+        return records;
+    }
+
+    /**
+     * Cross-leaf migration primitive — delete an owned document under the CURRENTLY
+     * init'd leaf. The leaf must be the owner (delete+recreate ownership move, RFC-001
+     * §6). Returns { ok: true } on success and { ok: false } (no throw) on failure so
+     * the /account secure flow can fail-safe (KEEP the old leaf) rather than orphan
+     * records.
+     */
+    async deleteOwnedData(
+        collection: string,
+        documentId: string,
+        data: any[] = [],
+    ): Promise<{ ok: boolean }> {
+        try {
+            await this.user.deleteData({
+                collection,
+                data,
+                document: documentId,
+            });
+            return { ok: true };
+        } catch (error) {
+            console.error('Error deleting owned survey data:', error);
+            return { ok: false };
+        }
+    }
+
     async testDirectWrite(survey: Survey, poolConfig: PoolConfig, data: any, invocations: Record<string, string>) {
         const nodes = [
             { url: 'https://nildb-stg-n1.nillion.network', did: 'did:key:zQ3shcivRHjnU2ASFFTFC3Y1uoLAqEhTTqMKHGUundhcywNy7' },

@@ -13,16 +13,37 @@ import { fetchSurvey } from "../../shared/src/shared";
 //
 // The persist flow (later task) re-establishes a durable anchor identity from this
 // factory and rotates records E -> S. It is deliberately NOT invoked at entry.
+//
+// Refactor (Task 2): `authenticate` now RETURNS the derived leaf `S` private key
+// (previously only a membership boolean) so the /account secure step can persist it
+// locally and use it after the E→S rotate. It STILL swaps the acting signer to the
+// derived leaf (updateSignerWithKey), matching its prior behaviour.
 
-export const authenticate = async (services: IServices, poolId: string) : Promise<boolean>=> {
-         
-    await services.waap.login(base);
-    const input = await services.waap.signMessage(`Sign in with your unlinkable account for respondent pool ${poolId}`); // make into factory // set splash ? 
-    const key = await services.oprf.getSecp256k1(input);
-    await services.account.updateSignerWithKey(key);
-
-    return await hasParticipatingAccount(services, poolId)
+export interface AuthenticatedResult {
+  /** Derived leaf `S` private key — the only place S is materialized for storage. */
+  key: `0x${string}`;
+  /** Derived leaf `S` address (the post-swap acting signer). */
+  address: `0x${string}`;
+  /** Whether the derived leaf is already a registered pool member. */
+  participating: boolean;
 }
+
+export const authenticate = async (
+  services: IServices,
+  poolId: string
+): Promise<AuthenticatedResult> => {
+  await services.waap.login(base);
+  const input = await services.waap.signMessage(
+    `Sign in with your unlinkable account for respondent pool ${poolId}`
+  );
+  const key = (await services.oprf.getSecp256k1(input)) as `0x${string}`;
+  await services.account.updateSignerWithKey(key);
+
+  const address = services.account.getSignerAddress() as `0x${string}`;
+  const participating = await hasParticipatingAccount(services, poolId);
+
+  return { key, address, participating };
+};
 
 export const hasParticipatingAccount = async (services: IServices, poolId: string) : Promise<boolean> => {
 

@@ -161,6 +161,28 @@ Read it before designing the contract methods (§7). Headline findings:
 
 ## 7. Recommended next step — the contract methods
 
+> **CORRECTION (2026-08-30, Task 2 planning):** The stance below — *"deliberately no
+> `changeOwner`/`rotateMember` in the method surface; rotation = off-chain re-derivation →
+> re-register a fresh leaf"* — was based on an assumption that turned out to be false and is
+> **SUPERSEDED for Task 2.** The assumption was that registering the fresh derived leaf at persist
+> was achievable (RFC §7.3 even budgets it as "the second transaction"). In the actual contract the
+> **only** registration function, `registerInPool`, is **card/nullifier-bound** and the entry card is
+> already spent → registering a fresh derived S with it reverts `NullifierAlreadyUsed`
+> (`S3ntimentSurveyStore.sol:454`). There is **no nullifier-less member-add / no changeOwner / no
+> rotate**. So the off-chain-rotation stance leaned on a registration seam that does not exist.
+> **Task 2 therefore requires a self-authorizing on-chain swap** — the user's `rotateMember(poolId,
+> newLeaf)`: called while the acting leaf is still E (SMC owner = E), contract requires
+> `poolMembers[poolId][owner] == true`, then atomically `poolMembers[poolId][E] = false;
+> poolMembers[poolId][S] = true`. Authorization = only E's keyholder can drive the SMC whose owner is
+> E (optional ERC-1056 `ecrecover` + nonce/expiry hardening per the audit idiom). This also cleans up
+> the returning-user orphan E2. NOTE: the contract swap moves **membership only** — the nilDB
+> E→S record migration (per-leaf immutable `did:key` owner; RFC §6) is still required separately.
+> This is the concrete mechanism for the RFC §7.3 second transaction and resolves the RFC §11
+> "add nothing for rotation" tension; record an RFC amendment with the rotate PR.
+
+All the rest of §7 below is written under the old (now-superseded) rotation stance; keep it for
+the ERC-1056 authority idiom, but do not treat "no rotate method" as current for Task 2.
+
 User direction: **start with the contract methods**, and *read the ERC-1056 registry Solidity as a
 reference for how to rotate/authorize an address* (not the standard, not Nillion — just the pattern). Two
 reconciliation points to hold when designing:
@@ -283,6 +305,159 @@ anchor, derive the fresh stealth address, and rotate docs + registration on cont
 
 ---
 
+<<<<<<< HEAD
+## 9. Task 2 — "Secure your stealth account" (design refinement + returning-invite analysis, 2026-08-30)
+
+**Author:** s3n-orchestrator. Addendum capturing the Task 2 (post-survey persist) design as the
+user refined it, plus a read-only exploration of the returning-invite merge case. Task 2 remains
+**NOT implemented** — only design + analysis exist.
+
+> **GOVERNANCE LESSON (2026-08-30):** The ERC-1056/did:ethr "follow or not" deliberation pushed the
+> design to be defined by *opposition* to a reference standard, which conflated two distinct things
+> and led to a decision that stopped honoring the original goal. The ceremony we rightly dropped
+> (key-event logs, witnesses, revocation books, DID-doc keying) was treated as one with the minimal
+> on-chain membership swap the product actually needs — so "no rotateMember" was chosen as a
+> statement *about a standard*, not as an answer to *"what does the persist/account flow need from
+> the contract?"* Real rule going forward: **evaluate each primitive against the product goal, never
+> by its resemblance to (or distance from) a reference standard.** "Do we follow X?" is a bad lens;
+> "does the flow need this, and is it still minimal?" is the good one.
+
+### 9.1 The reframe (user, 2026-08-30)
+
+Task 2 is **"secure your stealth account," NOT "join."** Because PR #21 already makes a respondent a
+pool member at entry (bootstrap `E` registers like any leaf), there is nothing left to *join*. The
+UX:
+
+- The CTA lives on the **results/survey-complete page**, for the anchor-less population only (RFC §5.2
+  step 4–5).
+- Copy (user-approved): *"The keys for your stealth account are stored in this app. If you lose or
+  reset this device, your account is permanently lost."*
+- Trigger state: a localStorage signal that means "has this device secured?" — user proposed
+  `secure_account: boolean` / `rotated_keys` / `anchor_address: string`; when **undefined/false →
+  show the CTA**. Explore confirmed **none of these keys exist today** (Q4 below).
+- CTA button → **`/secure` route** which offers options. Placeholders (user will fill in later):
+  1. email + human wallet (the `humanWallet.factory.ts` from PR #21 / Task 1a)
+  2. railgun *(placeholder)*
+  3. nihilium *(placeholder)*
+
+### 9.2 Flag recommendation (orchestrator)
+
+Prefer `anchor_address: string` (or anchor identifier) as the single source of truth, written **only
+once the E→S rotation fully succeeds** (register S → migrate records → wipe E = N1); `undefined` =>
+show CTA. Avoid a free-floating boolean that can drift from reality. The flag records "*this device
+secured*," NOT recovery material — it does NOT contain the anchor key, so it cannot silently re-derive
+S (recovery requires presenting the anchor → human-wallet/WaaP auth). Nuance: after recovery on a fresh
+device, localStorage is empty so the CTA would show even though recoverable — decide whether to mark
+secured on re-derivation.
+
+### 9.3 Returning-invite merge — analysis (explore `v4flash-explore-returning-invite-merge`,
+session `eaf5d7a28163480abdba355bbb12ac9b`; report `brain/audits/returning-invite-recovery-2026-08-30.md`)
+
+Scenario: user secured in pool P (anchor A → leaf S, records under S). Later re-invited to SAME pool P
+with a DIFFERENT nullifier N2, on a fresh device → entry bootstraps random E2 and registers it
+(N2 burned), then at the end the user reveals A and re-derives S (already a member). Findings:
+
+- **RFC Q2 resolves to REVERT.** `registerInPool` reverts `AlreadyPoolMember()` on an existing member
+  and the revert rolls back the whole tx (nullifier NOT consumed) —
+  `contracts/src/S3ntimentSurveyStore/S3ntimentSurveyStore.sol:466`, test `contracts/test/S3ntimentSurveyStore.test.ts:1270`.
+  Recovery must therefore be **re-derivation, not re-registration** (RFC §4.5). No contract change needed.
+- **Access is gated solely by `isPoolMember(leaf)`** — no per-survey/batch authorization (RFC §8.1;
+  Lit `decrypt-for-respondent.ts:19-28`, backend `main.ts:184-189`). So redeeming N2 as E2 grants E2
+  nothing S doesn't already hold — it only burns N2 + creates an orphan E2 member/record set.
+- **Re-deriving S recovers everything natively with zero on-chain writes:** deterministic leaf →
+  same did:key → same Nillion seed (`createNillDBSeed`) → S's membership + records come back (§4.6).
+- **E2→S migration does NOT exist.** Records are per-leaf (`did:key` from leaf). Only a same-owner
+  delete+recreate `updateOwned` exists (`nilldb.user.service.ts:69-75`, **no production call site**).
+  Real options = ACL-grant wrapper (`POST /v1/users/data/acl/grant`, raw endpoint, not wrapped) or a
+  two-client delete+recreate (both E2+S keys live in one session). Both are **to build** (RFC §11
+  "record migration helper for leaf→leaf", still unimplemented).
+- **No silent returning-anchor detection:** no `anchor*`/`secure_account` key exists; human-wallet
+  anchoring (`humanWallet.factory.ts:17-25`) needs interactive WaaP login (the prompt deferred identity
+  removed) and is deliberately not at entry. So recovery at the START would re-add an auth prompt.
+
+**Design conclusions (orchestrator):**
+- Recover at the **END** (the secure step doubles as recovery) — preserves frictionless entry that Task 1
+  exists to protect; silent recovery isn't available (see above). Reopens RFC Q3 if start-recovery is
+  considered.
+- **Avoid spawning E2 for returning anchors** when feasible — if the user recovers S at entry, skip
+  bootstrapping E2 entirely; redeeming N2 against an existing member reverts anyway, so N2 is simply
+  left unburned and the user proceeds as S (no migration needed).
+- The E2→S migration helper is still worth building per RFC §11 (needed for re-secure/rotate), just not
+  as the hot path of this scenario.
+- **Open product question** (ranks above the timing call): if access = `isPoolMember(S)` alone, what is a
+  second invite actually *for* when S is already a member? If new surveys need re-inviting per round, that
+  is the operator controlling participation — confirm before over-engineering the merge.
+
+**Task 2 implementation is NOT started.** Next when the user confirms the open design points
+(flag representation; what railgun/nihilium establish; the second-invite purpose): decompose
+Task 2 (results-page CTA + `/secure` route + anchor step + E→S rotate + wipe E) → explore the precise
+seams → implement in fresh worktree (PR #22) → independent review → human merge.
+
+### 9.4 Two-case recovery model + `/account` route (user decision, 2026-08-30)
+
+User resolved the start-vs-end recovery question into a two-case model with **no pre-survey questions
+in either case**, and a dedicated **`/account` route that replaces `/secure`**:
+
+- **Case 1 — new invite, app still has stealth + anchor state (same device):** recover at START,
+  **silently** (reuse existing on-device state — not a prompt). Requires persisting the **derived leaf
+  `S`'s key locally** (plus the `anchor_address` flag) so entry can reuse S without re-derivation/re-auth.
+  Consistent with RFC §8.2 (app holds derived leaves; only the anchor is app-independent) and with N1
+  (wipe the *bootstrap* E, keep the *derived* S). XSS/device-readability caveat accepted (N1 backdrop);
+  the anchor remains the portable recovery backstop for a lost device.
+- **Case 2 — new invite, clean app (fresh device / cleared storage):** bootstrap E (as Task 1 does),
+  **zero questions before the survey**, recovery deferred to opt-in after. On a fresh device a re-invited
+  returning user isn't recognized → boots E2, answers, then recovers earlier anchor+S in `/account`
+  (this is where the E2→S re-assignment from §9.3 lives).
+- **`/account` route (replaces `/secure`):** the single home for *secure your stealth account*, *recover
+  an earlier anchor* (incl. E2→S re-assign), *rotate*, *manage*. Results-page CTA → `/account`. Recovery
+  is never forced; user can decline and return later.
+
+Storage progression: persist `bootstrapE` (case-2 entry) → on secure, migrate to and persist derived `S`
++ `anchor_address` flag (`anchor_address === undefined` ⇒ show CTA) → case-1 entry reuses S, case-2 entry
+bootstraps then offers `/account`.
+
+**Task 2 implementation is still NOT started.** Decision on the derived-leaf storage (user, 2026-08-30):
+**keep the derived `S` private key persisted; NO removal / no encryption-at-rest.** Compromised-phone
+exposure of a per-pool leaf was judged not worth the hassle — the leaf is a bounded asset (can't reach
+the anchor or other pools per INV-3), and a compromised phone has bigger problems than one pool
+membership. So case-1 same-device recovery stays silent (reuse `S`), no re-auth needed. Options
+(email+human wallet / railgun / nihilium) remain placeholders except email+human wallet = the extracted
+`humanWallet.factory.ts`. Open for the brief: the second-invite purpose (re-invite a member?) and the
+railgun/nihilium definitions.
+
+## §9.5 — Per-pool member/respondent count (2026-08-30)
+
+**User:** wants both sources after asking "can we get respondent count per pool from contract?": (1) on-chain **registered-member count** read (panel size) AND (2) **actual respondent count** (from nilDB answer records, per RFC §7.1 — off-chain, only source that satisfies it).
+
+**Grounded facts** (report: `brain/audits/respondent-count-per-pool-2026-08-30.md`): `poolMembers` is a private non-enumerable mapping (`S3ntimentSurveyStore.sol:115`); only `isPoolMember` predicate exists; the only on-chain counter is per-batch `cardCount` (cumulative, over-counts vs current, unaffected by revoke/rotate). No `getPoolMembers`/`getPoolMemberCount` exists.
+
+**Decision (minimal, correct):** add `getPoolMemberCount(poolId)` read backed by a maintained `mapping(string => uint256) poolMemberCounts` counter — incremented on successful `registerInPool` (after `AlreadyPoolMember` revert so no double-count), decremented on `revokeMember` **only if the member was actually a member** (revoke is idempotent; avoid underflow), and adjusted in `rotateMember` by net delta (swap to a non-member newLeaf = net 0; Case-2 cleanup rotating to an already-member S = net −1, removing oldLeaf). Enables the panel-size proxy without enumerating the mapping. Full enumeration NOT in scope (count is what was asked). Actual respondents remain nilDB-side.
+
+**STATUS (2026-08-30): PR #25 (`deepseek/get-pool-member-count`, commit `6c6b5b194`) IMPLEMENTED + REVIEWED — READY FOR HUMAN MERGE.** Gate independently confirmed: `@s3ntiment/contracts` **82 passing** at committed HEAD (75 baseline + 7 new). Independent review (`brain/reviews/get-pool-member-count-pr25-review-2026-08-30.md`): **all 8 acceptance items MET, 0 blocking, READY-TO-MERGE.** Non-blocking follow-ups: (1) no dedicated self-rotation test (behavior correct in code, documented, untested); (2) confirm storage-layout tail-append if the contract is an upgradeable proxy; (3) Case-2 rotate-to-already-member path verified via gate+post-asserts, pre-write guards not fully visible in the diff. Actual respondent count remains a nilDB-side (off-chain) task — the contract only exposes the registered-member panel-size proxy.
+
+## §10 — Contract PR #24 (`rotateMember`) COMPLETE + reviewed (2026-08-30)
+
+**PR #24** (`deepseek/rotate-member`, commit `eaf1a287f`) — implements the agreed resolution to the
+registration seam: `S3ntimentSurveyStore.rotateMember(poolId, newLeaf, signature)` external,
+self-authorizing membership rotation (old stealth's signature recovered + checked = acting SMC owner &
+current member → atomic E→S swap in one call; chain/contract/pool-bound digest + old-leaf-removed
+after swap → replay-bounded; no nonce). **Gate: 75 contract tests passing at committed HEAD (+8 new),
+suite green.** Independent review (`brain/reviews/rotate-member-pr24-review-2026-08-30.md`): **all 9
+contract items MET, 0 blocking, READY-TO-MERGE.** Non-blocking hardening notes only (no
+already-member/self-rotation guards — cosmetically strict, not exploitable).
+
+**This resolves the "add nothing for rotation" tension** — the contract now has the registration seam
+`registerInPool` (card/nullifier-bound) could not provide. nilDB `E → S` record migration remains OUT
+of contract scope (separate off-chain half of the rotate, required in the frontend PR per RFC §6).
+
+**NEXT/IN-FLIGHT (2026-08-30): frontend `/account` PR** — results CTA gated on `anchor_address === undefined`,
+`/account` route + AccountController (replaces `/secure`), humanWallet.factory key-return refactor, secure
+flow (derive S → `rotateMember` → nilDB E→S migrate → wipe `bootstrapE` → persist S + `anchor_address`),
+Case-2 recover/re-assign, storage helpers, tests. **PR #24 (rotateMember) IS merged** — the first-time
+S-registration gap flagged in the Task 2 explore (which predated rotateMember) is resolved by rotateMember.
+Queued after this: the nilDB-side actual-respondent count (RFC §7.1) and the user's remaining railgun/nihilium
+option definitions.
+=======
 ## 9.5 — Per-pool registered-member count (2026-08-30)
 
 **Implemented.** Adds `S3ntimentSurveyStore.getPoolMemberCount(poolId)` — a current
@@ -306,3 +481,4 @@ registered-member (panel-size) count read backed by a maintained
 **SHIPPED** in PR (branch `deepseek/get-pool-member-count`): contract + tests + method-surface spec
 amendment. Strictly additive (new storage + new function; no existing selector/ABI/event changed).
 Actual respondent count remains nilDB-side (RFC §7.1) as before.
+>>>>>>> d417e9368124ac1218d2bf81fd3f4e75ada3b2b6

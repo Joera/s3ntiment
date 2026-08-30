@@ -2,6 +2,8 @@ import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
+import { loadAnchorAddressFromStorage } from '../state/storage.js';
+import { router } from '../router.js';
 
 const BACKENDURL = import.meta.env.VITE_PROD == "true" ? import.meta.env.VITE_BACKEND_PROD : import.meta.env.VITE_BACKEND_DEV;
 
@@ -29,6 +31,12 @@ export class CompletedController {
 
         const view = reactive('#completed-content', () => {
 
+            // "Secure your stealth account" CTA: shown iff this device has NOT yet
+            // secured an anchor (RFC §9.2 — `anchor_address === undefined` is the
+            // single source of truth; no separate boolean).
+            const anchorAddress = loadAnchorAddressFromStorage();
+            const showSecureCta = anchorAddress === undefined;
+
             return `
                 ${store.activeSurvey?.isScored
                     ? this.score
@@ -47,6 +55,11 @@ export class CompletedController {
                         <p>It's fine to close this window.</p>
                     </div>`
                 }
+                ${showSecureCta
+                    ? `<div style="margin-top:1.5rem">
+                        <button id="secure-account-btn" class="btn-primary">Secure your stealth account</button>
+                      </div>`
+                    : ''}
             `;
         });
 
@@ -95,6 +108,14 @@ export class CompletedController {
     
             btn?.addEventListener("click", async () => {
                 window.close();
+            });
+
+            // Results-page CTA -> /account (secure your stealth account). Only
+            // rendered when anchor_address === undefined, so the listener is inert
+            // once secured.
+            const secureBtn = document.getElementById("secure-account-btn");
+            secureBtn?.addEventListener("click", async () => {
+                router.navigate('/account');
             });
         }
     

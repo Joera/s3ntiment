@@ -14,6 +14,7 @@ import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { removeSplash } from './onpageload.js';
 import { AuthController } from './controllers/auth-ctrlr.js';
 import { CompletedController } from './controllers/completed-ctrlr.js';
+import { AccountController } from './controllers/account-ctrlr.js';
 import { resolveRootGate, resolveSurveyGate } from './router.gates.js';
 
 
@@ -93,6 +94,14 @@ export const initRouter = (services: IServices) => {
           const surveyId = match?.params?.surveyId || match?.data?.surveyId || '';
           const docId = match?.params?.docId || match?.data?.docId || '';
           currentController = new CompletedController(services, surveyId, docId);
+          removeSplash();
+          currentController.render();
+        }
+      )
+      .on('/account',
+        () => {
+          if (currentController?.destroy) currentController.destroy();
+          currentController = new AccountController(services);
           removeSplash();
           currentController.render();
         }
