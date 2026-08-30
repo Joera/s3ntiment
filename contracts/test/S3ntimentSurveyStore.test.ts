@@ -2588,5 +2588,348 @@ describe('S3ntimentSurveyStore', function () {
 		});
 	});
 
+	describe('getPoolMemberCount (per-pool registered-member count)', function () {
+		// Set up a pool with one batch and return the signing wallet + address.
+		async function setupPoolBatch({env, S3ntimentSurveyStore, poolId, safe}) {
+			const batchWallet = createBatchWallet();
+			const batchAddress = batchWallet.address;
+			const surveyId = 'count-setup-' + poolId;
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: [surveyId, poolId, 'QmCid1', [batchAddress]],
+				account: safe,
+			});
+			return {batchWallet, batchAddress};
+		}
+
+		// Register `member` in `poolId` via a valid card over a distinct
+		// `nullifier`, using the pool's batch. Multiple members can share one
+		// pool/batch by passing distinct nullifiers (mirrors registerInPool tests).
+		async function registerLeaf({
+			env,
+			S3ntimentSurveyStore,
+			poolId,
+			member,
+			batchWallet,
+			batchAddress,
+			nullifier,
+		}) {
+			const context = cardContext(S3ntimentSurveyStore.address, poolId);
+			const signature = await signCardMessage(batchWallet, context, nullifier, batchAddress);
+			const smc = await viem.deployContract('MockSMC', [member]);
+			await smc.write.register([
+				S3ntimentSurveyStore.address,
+				poolId,
+				nullifier,
+				batchAddress,
+				signature,
+			]);
+			return {smc};
+		}
+
+		async function memberCount(env, S3ntimentSurveyStore, poolId) {
+			return await env.read(S3ntimentSurveyStore, {
+				functionName: 'getPoolMemberCount',
+				args: [poolId],
+			});
+		}
+
+		it('returns 0 for a fresh/unknown pool (no revert)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-count-fresh';
+
+			// Unknown pool: 0, does NOT revert (matches the data/aggregate getters).
+			expect(await memberCount(env, S3ntimentSurveyStore, 'ghost-pool')).toEqual(0n);
+
+			// Freshly-created existing pool with no members yet: 0.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: ['s1', poolId, 'QmCid1', []],
+				account: safe,
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(0n);
+		});
+
+		it('increments the count once per successful registration of a distinct leaf', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-count-increment';
+			const members = [unnamedAccounts[3], unnamedAccounts[4], unnamedAccounts[5]];
+			const {batchWallet, batchAddress} = await setupPoolBatch({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				safe,
+			});
+
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(0n);
+			for (let i = 0; i < members.length; i++) {
+				await registerLeaf({
+					env,
+					S3ntimentSurveyStore,
+					poolId,
+					member: members[i],
+					batchWallet,
+					batchAddress,
+					nullifier: 'count-inc-' + i,
+				});
+				expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(BigInt(i + 1));
+			}
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(3n);
+		});
+
+		it('does not double-increment when an AlreadyPoolMember registration reverts', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const member = unnamedAccounts[3];
+			const poolId = 'pool-count-dup';
+			const {batchWallet, batchAddress} = await setupPoolBatch({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				safe,
+			});
+
+			// First successful registration -> 1.
+			await registerLeaf({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				member,
+				batchWallet,
+				batchAddress,
+				nullifier: 'count-dup-1',
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+
+			// A second, valid card for the SAME member reverts AlreadyPoolMember
+			// AFTER the counter increment site, so the whole tx (incl. the
+			// increment) rolls back -> still 1, no double-count.
+			await expect(
+				registerLeaf({
+					env,
+					S3ntimentSurveyStore,
+					poolId,
+					member,
+					batchWallet,
+					batchAddress,
+					nullifier: 'count-dup-2',
+				}),
+			).toBeRejectedWith(`custom error 'AlreadyPoolMember()'`);
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+		});
+
+		it('decrements the count on revokeMember', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const member = unnamedAccounts[3];
+			const poolId = 'pool-count-revoke';
+			const {batchWallet, batchAddress} = await setupPoolBatch({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				safe,
+			});
+			await registerLeaf({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				member,
+				batchWallet,
+				batchAddress,
+				nullifier: 'count-revoke-1',
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, member],
+				account: safe,
+			});
+
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(0n);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, member],
+				}),
+			).toEqual(false);
+		});
+
+		it('does not underflow or double-decrement on an idempotent (already-false) revoke', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const member = unnamedAccounts[3];
+			const poolId = 'pool-count-revoke-idem';
+			const {batchWallet, batchAddress} = await setupPoolBatch({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				safe,
+			});
+			await registerLeaf({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				member,
+				batchWallet,
+				batchAddress,
+				nullifier: 'count-revoke-idem-1',
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+
+			// First revoke removes the member -> 0.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, member],
+				account: safe,
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(0n);
+
+			// Second revoke (member already false) is a no-op: count stays 0, no
+			// underflow rollback, no double-decrement.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, member],
+				account: safe,
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(0n);
+
+			// A never-registered member revoke is likewise a no-op.
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'revokeMember',
+				args: [poolId, unnamedAccounts[9]],
+				account: safe,
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(0n);
+		});
+
+		it('keeps the count unchanged when rotating to a non-member new leaf', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('a1');
+			const newLeaf = createLeaf('b1');
+			const poolId = 'pool-count-rotate-nonmember';
+			const {batchWallet, batchAddress} = await setupPoolBatch({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				safe,
+			});
+			const {smc} = await registerLeaf({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				member: oldLeaf.address,
+				batchWallet,
+				batchAddress,
+				nullifier: 'count-rot-nonmember',
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await smc.write.rotate([
+				S3ntimentSurveyStore.address,
+				poolId,
+				newLeaf.address,
+				signature,
+			]);
+
+			// Swap to a non-member newLeaf is net-zero: old out, new in.
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, oldLeaf.address],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, newLeaf.address],
+				}),
+			).toEqual(true);
+		});
+
+		it('decreases the count by 1 when rotating to an already-member new leaf (Case-2 cleanup)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const oldLeaf = createLeaf('c1');
+			const newLeaf = createLeaf('d1');
+			const poolId = 'pool-count-rotate-member';
+			const {batchWallet, batchAddress} = await setupPoolBatch({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				safe,
+			});
+			// Two current members: oldLeaf and newLeaf (newLeaf ALREADY a member).
+			const {smc} = await registerLeaf({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				member: oldLeaf.address,
+				batchWallet,
+				batchAddress,
+				nullifier: 'count-rot-member-a',
+			});
+			await registerLeaf({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				member: newLeaf.address,
+				batchWallet,
+				batchAddress,
+				nullifier: 'count-rot-member-b',
+			});
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(2n);
+
+			const signature = await signRotateMessage(
+				oldLeaf,
+				S3ntimentSurveyStore.address,
+				poolId,
+				oldLeaf.address,
+				newLeaf.address,
+				CHAIN_ID,
+			);
+			await smc.write.rotate([
+				S3ntimentSurveyStore.address,
+				poolId,
+				newLeaf.address,
+				signature,
+			]);
+
+			// Case-2 cleanup: oldLeaf removed, newLeaf stays -> count decreases by 1.
+			expect(await memberCount(env, S3ntimentSurveyStore, poolId)).toEqual(1n);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, oldLeaf.address],
+				}),
+			).toEqual(false);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'isPoolMember',
+					args: [poolId, newLeaf.address],
+				}),
+			).toEqual(true);
+		});
+	});
+
 	});
 });
