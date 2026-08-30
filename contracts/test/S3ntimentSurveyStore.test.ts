@@ -488,6 +488,284 @@ describe('S3ntimentSurveyStore', function () {
 		});
 	});
 
+	describe('getPoolSurveysSince (view)', function () {
+		// Create a survey at an explicit block timestamp (vm.warp-style control via
+		// networkHelpers.time.setNextBlockTimestamp — createdAt = block.timestamp
+		// at create). Returns the stored survey tuple [ipfsCid, poolId, createdAt].
+		async function createSurveyAt({env, S3ntimentSurveyStore, poolId, surveyId, ipfsCid, timestamp, safe}) {
+			await networkHelpers.time.setNextBlockTimestamp(timestamp);
+			await env.execute(S3ntimentSurveyStore, {
+				functionName: 'createSurvey',
+				args: [surveyId, poolId, ipfsCid, []],
+				account: safe,
+			});
+			return await env.read(S3ntimentSurveyStore, {
+				functionName: 'getSurvey',
+				args: [surveyId],
+			});
+		}
+
+		it('returns an empty array for an unknown pool (no revert)', async function () {
+			const {env, S3ntimentSurveyStore} =
+				await networkHelpers.loadFixture(deployAll);
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveysSince',
+					args: ['ghost-pool', 0n],
+				}),
+			).toEqual([]);
+		});
+
+		it('filters surveys strictly after `since` (before / at / after)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-since-filter';
+			const t0 = await networkHelpers.time.latest();
+
+			// Distinct creates: s1 at t0+10, s2 at t0+20, s3 at t0+30.
+			const s1 = await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 's1',
+				ipfsCid: 'QmCid1',
+				timestamp: t0 + 10,
+				safe,
+			});
+			const s2 = await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 's2',
+				ipfsCid: 'QmCid2',
+				timestamp: t0 + 20,
+				safe,
+			});
+			const s3 = await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 's3',
+				ipfsCid: 'QmCid3',
+				timestamp: t0 + 30,
+				safe,
+			});
+
+			// Sanity: distinct, ascending createdAt values were recorded.
+			expect(s1[2]).toEqual(BigInt(t0 + 10));
+			expect(s2[2]).toEqual(BigInt(t0 + 20));
+			expect(s3[2]).toEqual(BigInt(t0 + 30));
+
+			// since == s2.createdAt: s1 (before) and s2 (at) are excluded, s3
+			// (after) is kept — the comparison is STRICTLY greater-than.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveysSince',
+					args: [poolId, s2[2]],
+				}),
+			).toEqual([{id: 's3', ipfsCid: 'QmCid3', createdAt: s3[2]}]);
+
+			// since == s1.createdAt: s1 (at) excluded, s2 + s3 kept in insertion order.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveysSince',
+					args: [poolId, s1[2]],
+				}),
+			).toEqual([
+				{id: 's2', ipfsCid: 'QmCid2', createdAt: s2[2]},
+				{id: 's3', ipfsCid: 'QmCid3', createdAt: s3[2]},
+			]);
+
+			// since == s3.createdAt: s3 (at) excluded -> empty.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveysSince',
+					args: [poolId, s3[2]],
+				}),
+			).toEqual([]);
+		});
+
+		it('only returns the requested pool\'s surveys (pools isolated)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const t0 = await networkHelpers.time.latest();
+
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId: 'pool-a',
+				surveyId: 'a1',
+				ipfsCid: 'QmCidA',
+				timestamp: t0 + 10,
+				safe,
+			});
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId: 'pool-b',
+				surveyId: 'b1',
+				ipfsCid: 'QmCidB',
+				timestamp: t0 + 20,
+				safe,
+			});
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId: 'pool-a',
+				surveyId: 'a2',
+				ipfsCid: 'QmCidA2',
+				timestamp: t0 + 30,
+				safe,
+			});
+
+			// Pool A's results never include pool B's survey — even though b1's
+			// timestamp (t0+20) lies between a1's (t0+10) and a2's (t0+30).
+			const poolASinceA1 = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getPoolSurveysSince',
+				args: ['pool-a', BigInt(t0 + 10)],
+			});
+			expect(poolASinceA1.map((r) => r.id)).toEqual(['a2']);
+
+			const poolAAll = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getPoolSurveysSince',
+				args: ['pool-a', 0n],
+			});
+			expect(poolAAll.map((r) => r.id)).toEqual(['a1', 'a2']);
+			expect(poolAAll.some((r) => r.id === 'b1')).toEqual(false);
+
+			const poolBAll = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getPoolSurveysSince',
+				args: ['pool-b', 0n],
+			});
+			expect(poolBAll.map((r) => r.id)).toEqual(['b1']);
+		});
+
+		it('populates SurveyRef fields (id / ipfsCid / createdAt)', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-since-fields';
+			const t0 = await networkHelpers.time.latest();
+			const timestamp = t0 + 42;
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 'field-srv',
+				ipfsCid: 'QmFieldCid',
+				timestamp,
+				safe,
+			});
+
+			const refs = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getPoolSurveysSince',
+				args: [poolId, 0n],
+			});
+			expect(refs).toEqual([{id: 'field-srv', ipfsCid: 'QmFieldCid', createdAt: BigInt(timestamp)}]);
+			expect(refs[0].id).toEqual('field-srv');
+			expect(refs[0].ipfsCid).toEqual('QmFieldCid');
+			expect(refs[0].createdAt).toEqual(BigInt(timestamp));
+
+			// Cross-check against getSurvey (the source of truth for these fields).
+			const survey = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getSurvey',
+				args: ['field-srv'],
+			});
+			expect(refs[0].ipfsCid).toEqual(survey[0]);
+			expect(refs[0].createdAt).toEqual(survey[2]);
+		});
+
+		it('returns all surveys in insertion order when all are in range', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-since-all';
+			const t0 = await networkHelpers.time.latest();
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 'all-1',
+				ipfsCid: 'QmAll1',
+				timestamp: t0 + 10,
+				safe,
+			});
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 'all-2',
+				ipfsCid: 'QmAll2',
+				timestamp: t0 + 20,
+				safe,
+			});
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 'all-3',
+				ipfsCid: 'QmAll3',
+				timestamp: t0 + 30,
+				safe,
+			});
+
+			// since below every createdAt -> everything, in insertion order (NOT sorted).
+			const refs = await env.read(S3ntimentSurveyStore, {
+				functionName: 'getPoolSurveysSince',
+				args: [poolId, BigInt(t0)],
+			});
+			expect(refs.map((r) => r.id)).toEqual(['all-1', 'all-2', 'all-3']);
+			expect(refs.map((r) => r.createdAt)).toEqual([
+				BigInt(t0 + 10),
+				BigInt(t0 + 20),
+				BigInt(t0 + 30),
+			]);
+		});
+
+		it('returns an empty array when no survey is in range', async function () {
+			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+				await networkHelpers.loadFixture(deployAll);
+			const safe = unnamedAccounts[0];
+			const poolId = 'pool-since-none';
+			const t0 = await networkHelpers.time.latest();
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 'none-1',
+				ipfsCid: 'QmNone1',
+				timestamp: t0 + 10,
+				safe,
+			});
+			await createSurveyAt({
+				env,
+				S3ntimentSurveyStore,
+				poolId,
+				surveyId: 'none-2',
+				ipfsCid: 'QmNone2',
+				timestamp: t0 + 20,
+				safe,
+			});
+
+			// since == the newest createdAt -> strictly-after match excludes it.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveysSince',
+					args: [poolId, BigInt(t0 + 20)],
+				}),
+			).toEqual([]);
+			// A far-future `since` also returns nothing.
+			expect(
+				await env.read(S3ntimentSurveyStore, {
+					functionName: 'getPoolSurveysSince',
+					args: [poolId, BigInt(t0 + 9999)],
+				}),
+			).toEqual([]);
+		});
+	});
+
 	describe('multi-pool ordering invariants (getSafePools / getPoolBatches)', function () {
 		it('orders getSafePools per safe in creation order and isolates pools by safe', async function () {
 			const {env, S3ntimentSurveyStore, unnamedAccounts} =
