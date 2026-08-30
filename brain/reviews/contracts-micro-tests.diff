@@ -1,0 +1,380 @@
+diff --git a/brain/audits/contracts-micro-tests-2026-08-28.md b/brain/audits/contracts-micro-tests-2026-08-28.md
+new file mode 100644
+index 000000000..c95acc485
+--- /dev/null
++++ b/brain/audits/contracts-micro-tests-2026-08-28.md
+@@ -0,0 +1,109 @@
++# Contracts Package — Micro-Branch Tests (Bucket 1.3)
++
++**Date:** 2026-08-28
++**Branch/PR:** `deepseek/contracts-micro-tests`
++**Scope:** TEST-ONLY additions to `contracts/test/S3ntimentSurveyStore.test.ts`. **No production source changes** (`contracts/src/**` untouched) — verified via `git diff --stat` (only the test file changed).
++**Related audit:** `brain/audits/all-packages-coverage-gaps-2026-08-28.md` §1.3 (held in the `s3ntiment` main checkout at `brain/audits/all-packages-coverage-gaps-2026-08-28.md`).
++
++This closes the three "genuinely-missing micro-branches" identified for the contracts package:
++1. `InvalidBatchId` via the **createSurvey bootstrap** path.
++2. **Multi-pool ordering invariants** for `getSafePools` / `getPoolBatches`.
++3. The **`_recoverSigner` v-adjustment** edge.
++
++---
++
++## 1. What was added
++
++All new cases were added to the existing Hardhat `node:test` suite, matching the
++existing fixture pattern (`networkHelpers.loadFixture(deployAll)`, where
++`loadAndExecuteDeploymentsFromFiles` runs the **real** deploy script). The fixture
++setup, `createBatchWallet`, `signCardMessage` (from `@s3ntiment/shared/invites/encoding`),
++and `viem.deployContract('MockSMC', [...])` conventions are unchanged.
++
++| # | Test | Location (describe block) | Branch covered |
++|---|---|---|---|
++| 1 | `reverts during createSurvey bootstrap for a zero-address batch (InvalidBatchId)` | `pool + survey lifecycle (createSurvey)` | `createSurvey` → bootstrap loop → `_registerBatch` → `if (batchId == address(0)) revert InvalidBatchId()` |
++| 2 | `orders getSafePools per safe in creation order and isolates pools by safe` | `multi-pool ordering invariants (getSafePools / getPoolBatches)` | `safePools[safe].push(poolId)` aggregation order + per-safe isolation |
++| 3 | `aggregates getPoolBatches in push order across bootstrap and registerBatch` | `multi-pool ordering invariants (getSafePools / getPoolBatches)` | `poolBatchIds[poolId].push(batchId)` order across bootstrap + later `registerBatch`, per-pool isolation |
++| 4 | `accepts signatures whose raw v is 0 or 1 (adjusted to 27/28) and recovers the batch wallet` | `registration (registerInPool)` | `_recoverSigner`: `if (v < 27) v += 27` low-v success path |
++| 5 | `reverts when the raw v byte is 26 (adjusted to 53, not 27 — so recovery is refused)` | `registration (registerInPool)` | `_recoverSigner`: post-adjustment `require(v == 27 || v == 28)` failure |
++
++Suite delta: **36 → 41** passing tests (36 baseline + 5 new).
++
++---
++
++## 2. Per-branch notes
++
++### 2.1 `InvalidBatchId` via createSurvey bootstrap
++`createSurvey` bootstraps a new pool by looping the initial `batchIds` through
++`_registerBatch`. A zero-address entry therefore triggers the same
++`InvalidBatchId()` branch that was previously only reachable via `registerBatch`.
++The test asserts both a zero-only array and a mixed array (valid batch first,
++then a zero address). It additionally asserts that the whole transaction rolled
++back — `poolExists(poolId)` and `surveyExists(surveyId)` are both `false` even
++though `_createPool` runs before the batch loop (the pool is never persisted).
++
++### 2.2 Multi-pool ordering invariants
++Two tests. The first interleaves pool creation across two safes and asserts
++`getSafePools(safe)` returns each safe's pools in **creation order** and that the
++lists are **isolated per safe**. The second registers batches both during a
++two-pool bootstrap and via a later `registerBatch`, asserting
++`getPoolBatches(poolId)` returns them in **push order** (`bootstrap…` then
++`registerBatch…`) and that the pools' batch lists are isolated from each other.
++
++### 2.3 `_recoverSigner` v-adjustment edge — **premise refuted, real edge covered**
++The audit (§1.3) described this as "`v=26 → 27` valid". **Verified against the
++source, that premise is incorrect:**
++
++```solidity
++if (v < 27) v += 27;
++require(v == 27 || v == 28, "Invalid signature recovery value");
++```
++
++- For `v = 26`: `26 < 27` is true → `v = 26 + 27 = 53` → `require(53 == 27 || 53 == 28)`
++  fails → **reverts**. `v=26` does **not** recover a signer in this code.
++- The genuine, previously-untested micro-branch is the **low-v adjustment**
++  `v=0 → 27` and `v=1 → 28`, which recover the **same** signer as the canonical
++  `27/28` path.
++
++Per the acceptance contract ("verify the real behaviour first … if a micro-branch
++turns out to be un-reachable without a source change, note it in the report and
++skip it — don't expand scope"), I made **no source change**. Instead I covered the
++**real reachable** edge and pinned the `v=26` reality:
++
++- **Test 4 (real edge):** signs two cards (`card-lowv-0` → natural `v=27`,
++  `card-lowv-1` → natural `v=28`), rewrites each trailing `v` byte to its raw low
++  value (`0` and `1` — `v-27`), and asserts both complete a real `registerInPool`
++  as pool members (recovering the batch wallet), with `getBatch` cardCount `2`.
++  This deterministically exercises **both** low-v values (`0→27` and `1→28`).
++- **Test 5 (pinned reality):** rewrites a real signature's `v` byte to `0x1a` (26)
++  and asserts `registerInPool` **reverts** with
++  `Invalid signature recovery value` — documenting that `v=26` is rejected, not
++  adjusted to a valid signer. The canonical `v=27`/`v=28` success path remains
++  covered by the pre-existing happy-path `registerInPool` tests (unchanged).
++
++---
++
++## 3. Green gates (verified by the author)
++
++```
++$ cd contracts && pnpm hardhat test
++…
++41 passing (41 nodejs)
++
++$ cd contracts && pnpm run check:abi
++[abi-snapshot] ✓ S3ntimentSurveyStore: deployment ABI (base) matches compile artifact + typed ABI (27 entries)
++[abi-snapshot] ✓ all checked contracts match (deployments/base vs. compiled ABI).
++```
++
++- **`pnpm hardhat test`**: 41/41 passing (was 36).
++- **`pnpm run check:abi`**: green (`EXIT 0`).
++- **No source changes:** `git diff --stat` shows only
++  `contracts/test/S3ntimentSurveyStore.test.ts` (+240 lines). `pnpm-lock.yaml`
++  churn from the local install was reverted; no lockfile changes are part of this PR.
++
++---
++
++## 4. Notes
++- All new tests match the existing `node:test` + `earl` + Hardhat fixture conventions.
++- The PR is test-only and deliberately does **not** merge itself.
+diff --git a/contracts/test/S3ntimentSurveyStore.test.ts b/contracts/test/S3ntimentSurveyStore.test.ts
+index 8c2e4e8c6..28657f619 100644
+--- a/contracts/test/S3ntimentSurveyStore.test.ts
++++ b/contracts/test/S3ntimentSurveyStore.test.ts
+@@ -255,6 +255,49 @@ describe('S3ntimentSurveyStore', function () {
+ 			});
+ 			expect(poolBatches).toEqual([]);
+ 		});
++
++		it('reverts during createSurvey bootstrap for a zero-address batch (InvalidBatchId)', async function () {
++			const {env, S3ntimentSurveyStore, unnamedAccounts} =
++				await networkHelpers.loadFixture(deployAll);
++			const safe = unnamedAccounts[0];
++			const poolId = 'pool-bootstrap-zero';
++			const zeroBatch = '0x0000000000000000000000000000000000000000';
++
++			// A zero-address batch in the INITIAL batchIds array is routed through
++			// _registerBatch by the bootstrap path — the InvalidBatchId branch that is
++			// otherwise only exercised via registerBatch. The whole tx reverts.
++			await expect(
++				env.execute(S3ntimentSurveyStore, {
++					functionName: 'createSurvey',
++					args: ['s1', poolId, 'QmCid1', [zeroBatch]],
++					account: safe,
++				}),
++			).toBeRejectedWith(`custom error 'InvalidBatchId()'`);
++
++			// Also a mixed array: a valid batch first, then a zero address.
++			await expect(
++				env.execute(S3ntimentSurveyStore, {
++					functionName: 'createSurvey',
++					args: ['s2', poolId, 'QmCid1', ['0x' + '11'.repeat(20), zeroBatch]],
++					account: safe,
++				}),
++			).toBeRejectedWith(`custom error 'InvalidBatchId()'`);
++
++			// The whole tx rolled back: the implicitly-created pool (and survey) did
++			// not persist despite _createPool having run before the batch loop.
++			expect(
++				await env.read(S3ntimentSurveyStore, {
++					functionName: 'poolExists',
++					args: [poolId],
++				}),
++			).toEqual(false);
++			expect(
++				await env.read(S3ntimentSurveyStore, {
++					functionName: 'surveyExists',
++					args: ['s1'],
++				}),
++			).toEqual(false);
++		});
+ 	});
+ 
+ 	describe('updateSurvey', function () {
+@@ -361,6 +404,108 @@ describe('S3ntimentSurveyStore', function () {
+ 		});
+ 	});
+ 
++	describe('multi-pool ordering invariants (getSafePools / getPoolBatches)', function () {
++		it('orders getSafePools per safe in creation order and isolates pools by safe', async function () {
++			const {env, S3ntimentSurveyStore, unnamedAccounts} =
++				await networkHelpers.loadFixture(deployAll);
++			const safeA = unnamedAccounts[0];
++			const safeB = unnamedAccounts[1];
++
++			// Interleave pool creation across the two safes.
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['a1', 'p-a-1', 'QmCidA', []],
++				account: safeA,
++			});
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['b1', 'p-b-1', 'QmCidB', []],
++				account: safeB,
++			});
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['a2', 'p-a-2', 'QmCidA2', []],
++				account: safeA,
++			});
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['b2', 'p-b-2', 'QmCidB2', []],
++				account: safeB,
++			});
++
++			// safePools preserves creation order per safe.
++			expect(
++				await env.read(S3ntimentSurveyStore, {
++					functionName: 'getSafePools',
++					args: [safeA],
++				}),
++			).toEqual(['p-a-1', 'p-a-2']);
++			expect(
++				await env.read(S3ntimentSurveyStore, {
++					functionName: 'getSafePools',
++					args: [safeB],
++				}),
++			).toEqual(['p-b-1', 'p-b-2']);
++
++			// Each safe's pool list is fully isolated from the other safe's.
++			const safeBList = await env.read(S3ntimentSurveyStore, {
++				functionName: 'getSafePools',
++				args: [safeB],
++			});
++			expect(safeBList.includes('p-a-1')).toEqual(false);
++			expect(safeBList.includes('p-a-2')).toEqual(false);
++		});
++
++		it('aggregates getPoolBatches in push order across bootstrap and registerBatch', async function () {
++			const {env, S3ntimentSurveyStore, unnamedAccounts} =
++				await networkHelpers.loadFixture(deployAll);
++			const safe = unnamedAccounts[0];
++			const poolA = 'pool-order-a';
++			const poolB = 'pool-order-b';
++			const b1 = '0x' + '11'.repeat(20);
++			const b2 = '0x' + '22'.repeat(20);
++			const b3 = '0x' + '33'.repeat(20);
++			const b4 = '0x' + '44'.repeat(20);
++
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['a1', poolA, 'QmCidA', [b1, b2]],
++				account: safe,
++			});
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['b1', poolB, 'QmCidB', [b4]],
++				account: safe,
++			});
++			// A later print run appends to pool A via registerBatch.
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'registerBatch',
++				args: [poolA, b3],
++				account: safe,
++			});
++
++			// Bootstrap order first, then registerBatch order.
++			expect(
++				(
++					await env.read(S3ntimentSurveyStore, {
++						functionName: 'getPoolBatches',
++						args: [poolA],
++					})
++				).map((b) => b.toLowerCase()),
++			).toEqual([b1.toLowerCase(), b2.toLowerCase(), b3.toLowerCase()]);
++
++			// Per-pool isolation: pool B only has its own batch.
++			expect(
++				(
++					await env.read(S3ntimentSurveyStore, {
++						functionName: 'getPoolBatches',
++						args: [poolB],
++					})
++				).map((b) => b.toLowerCase()),
++			).toEqual([b4.toLowerCase()]);
++		});
++	});
++
+ 	describe('batch management (registerBatch)', function () {
+ 		it('lets the pool Safe register a new batch wallet', async function () {
+ 			const {env, S3ntimentSurveyStore, unnamedAccounts} =
+@@ -867,6 +1012,101 @@ describe('S3ntimentSurveyStore', function () {
+ 			);
+ 		});
+ 
++		it('accepts signatures whose raw v is 0 or 1 (adjusted to 27/28) and recovers the batch wallet', async function () {
++			const {env, S3ntimentSurveyStore, unnamedAccounts} =
++				await networkHelpers.loadFixture(deployAll);
++			const safe = unnamedAccounts[0];
++			const poolWallet = unnamedAccounts[3];
++			const secondWallet = unnamedAccounts[4];
++			const poolId = 'pool-reg-lowv';
++			const batchWallet = createBatchWallet();
++			const batchAddress = batchWallet.address;
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['s1', poolId, 'QmCid1', [batchAddress]],
++				account: safe,
++			});
++
++			// _recoverSigner: `if (v < 27) v += 27` lifts a raw v of 0 → 27 and
++			// 1 → 28, recovering the SAME signer as the canonical 27/28 path. Mutate
++			// the trailing v byte of each card to its raw low value (v - 27).
++			// card-lowv-0 naturally signs with v=27 (→ low 0) and card-lowv-1 with
++			// v=28 (→ low 1), deterministically covering both low-v edges.
++			const nullifiers = ['card-lowv-0', 'card-lowv-1'];
++			const members = [poolWallet, secondWallet];
++			const lowVs = new Set<number>();
++			for (let i = 0; i < members.length; i++) {
++				const sig = await signCardMessage(batchWallet, nullifiers[i], batchAddress);
++				const v = parseInt(sig.slice(-2), 16); // canonical v: 27 or 28
++				const lowV = v - 27; // 0 or 1
++				lowVs.add(lowV);
++				const lowVSignature = (sig.slice(0, -2) + lowV.toString(16).padStart(2, '0')) as `0x${string}`;
++
++				const mockSmc = await viem.deployContract('MockSMC', [members[i]]);
++				await mockSmc.write.register([
++					S3ntimentSurveyStore.address,
++					poolId,
++					nullifiers[i],
++					batchAddress,
++					lowVSignature,
++				]);
++			}
++
++			// Both low-v values (0 and 1) were exercised, each recovering the batch wallet.
++			expect([...lowVs].sort()).toEqual([0, 1]);
++			expect(
++				await env.read(S3ntimentSurveyStore, {
++					functionName: 'isPoolMember',
++					args: [poolId, poolWallet],
++				}),
++			).toEqual(true);
++			expect(
++				await env.read(S3ntimentSurveyStore, {
++					functionName: 'isPoolMember',
++					args: [poolId, secondWallet],
++				}),
++			).toEqual(true);
++			const batchData = await env.read(S3ntimentSurveyStore, {
++				functionName: 'getBatch',
++				args: [poolId, batchAddress],
++			});
++			expect(batchData[1]).toEqual(2n);
++		});
++
++		it('reverts when the raw v byte is 26 (adjusted to 53, not 27 — so recovery is refused)', async function () {
++			const {env, S3ntimentSurveyStore, unnamedAccounts} =
++				await networkHelpers.loadFixture(deployAll);
++			const safe = unnamedAccounts[0];
++			const poolWallet = unnamedAccounts[3];
++			const poolId = 'pool-reg-v26';
++			const batchWallet = createBatchWallet();
++			const batchAddress = batchWallet.address;
++			await env.execute(S3ntimentSurveyStore, {
++				functionName: 'createSurvey',
++				args: ['s1', poolId, 'QmCid1', [batchAddress]],
++				account: safe,
++			});
++
++			const signature = await signCardMessage(batchWallet, 'card-v26', batchAddress);
++			// v = 0x1a = 26. The coverage audit's premise was "v=26 → 27 valid", but per
++			// the source `if (v < 27) v += 27` maps 26 → 53, which fails
++			// `require(v == 27 || v == 28)`. This test pins the REAL behaviour: revert.
++			const v26Signature = (signature.slice(0, -2) + '1a') as `0x${string}`;
++
++			const mockSmc = await viem.deployContract('MockSMC', [poolWallet]);
++			await expect(
++				mockSmc.write.register([
++					S3ntimentSurveyStore.address,
++					poolId,
++					'card-v26',
++					batchAddress,
++					v26Signature,
++				]),
++			).toBeRejectedWith(
++				`VM Exception while processing transaction: reverted with reason string 'Invalid signature recovery value'`,
++			);
++		});
++
+ 		it('returns false for an unused nullifier (default state)', async function () {
+ 			const {env, S3ntimentSurveyStore} =
+ 				await networkHelpers.loadFixture(deployAll);

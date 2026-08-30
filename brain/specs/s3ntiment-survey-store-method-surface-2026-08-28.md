@@ -180,3 +180,59 @@ This spec is orchestrator-authored design (non-code). Turning §9 into source = 
 task for a `builder` sub-agent in its own worktree
 (`~/code/worktrees/s3ntiment-method-surface`), opening its own PR; independent review in a
 fresh session; the human merges.
+
+---
+
+## 10. AMENDMENT (2026-08-30) — `rotateMember` added (RFC §7.3 second-transaction / derived-leaf seam)
+
+**Status change.** §4/D2 and §6 said "NO on-chain rotation / keep `rotateMember` absent" and §9 made
+on-chain rotation a never-item. That stance is **superseded for the anchor-less persist case** by the
+handoff CORRECTION (2026-08-30) and RFC §11's "add nothing for rotation" tension: the only
+registration fn, `registerInPool`, is card/nullifier-bound and reverts `NullifierAlreadyUsed` once the
+entry card is spent, so it cannot register a fresh derived leaf `S` at persist. The user-directed remedy
+is a **self-authorizing on-chain swap**: `rotateMember` lets the current member leaf `E` rotate its own
+membership out to a new leaf `S` in one atomic call. This provides the concrete mechanism for RFC §7.3's
+"second transaction" and resolves the RFC §11 "add nothing for rotation" tension for the anchor-less
+bootstrap→derived path.
+
+**Exact signature (ADDITIVE — zero change to existing selectors/ABI):**
+```solidity
+function rotateMember(string memory poolId, address newLeaf, bytes memory signature) external;
+event Rotated(string poolId, address oldLeaf, address newLeaf);
+error NotPoolMember();
+error InvalidRotationTarget();
+```
+(plus reuse of existing `PoolNotFound`, `InvalidMemberAddress`, `InvalidSignature`.)
+
+**Authorization model (borrows the ERC-1056 `ecrecover`-to-determine-actor idiom, §5/A auth-1/2 — the
+"signature of old stealth checked, then swap"):**
+- `digest = keccak256(abi.encode(poolId, oldLeaf, newLeaf, address(this), block.chainid))` wrapped per
+  EIP-191 personal-sign — the **exact same abi.encode + EIP-191 convention** `registerInPool` uses for
+  cards (zero-ABI-change + byte-consistent digest family).
+- `oldLeaf = ISMC(msg.sender).owner()` (the caller's SMC owner is the current member leaf — same identity
+  resolution as `registerInPool`).
+- Recover `signer` from `signature`; require `signer == oldLeaf` (the member's own key, driving its own
+  SMC, rotates it) → else `InvalidSignature`.
+- Require `poolMembers[poolId][oldLeaf] == true` → else `NotPoolMember`.
+- Require `newLeaf != address(0)` → else `InvalidRotationTarget`.
+- Atomic: `poolMembers[poolId][oldLeaf] = false; poolMembers[poolId][newLeaf] = true; emit Rotated(...)`.
+
+**Guarding.** Mirrors `registerInPool`'s pool-existence guard (`PoolNotFound`); it is a self-service member
+action like `registerInPool` — **NOT** routed through `_requirePoolSafe` (that choke-point is for
+operator/Safe store ops; `registerInPool` is not Safe-gated either).
+
+**Replay safety.** After a successful rotate `oldLeaf` is no longer a member, so re-calling with the same
+signature reverts at `NotPoolMember` — naturally bounded, **no `nonce` storage added** (per the
+ERC-1056 borrow we only need a nonce for paymaster-relayed Signed paths, which remain deferred §5-B).
+The digest binds poolId + newLeaf + this contract + chain to prevent cross-pool / cross-contract /
+cross-chain replay.
+
+**Explicit out-of-scope (state in PR/report).** The contract swap moves **on-chain membership only**. The
+nilDB per-leaf immutable `did:key` owner record migration (`E → S`, RFC §6) is still required separately —
+`_owner` immutability is unchanged and ACL-grant / delete+recreate mechanics still apply.
+
+**Tests** (in `contracts/test/S3ntimentSurveyStore.test.ts`, additive — existing suite green): rotate current
+member → succeeds (old out, new in); caller not controlling old leaf (different-key signature) → reverts
+`InvalidSignature`; old leaf not a member → `NotPoolMember`; `newLeaf == 0` → `InvalidRotationTarget`;
+replay after success → `NotPoolMember`; wrong poolId / wrong chainId in digest → `InvalidSignature`;
+unknown pool → `PoolNotFound`.

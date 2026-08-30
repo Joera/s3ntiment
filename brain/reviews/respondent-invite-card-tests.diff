@@ -1,0 +1,708 @@
+diff --git a/brain/audits/respondent-invite-card-tests-2026-08-28.md b/brain/audits/respondent-invite-card-tests-2026-08-28.md
+new file mode 100644
+index 000000000..aa1acf93f
+--- /dev/null
++++ b/brain/audits/respondent-invite-card-tests-2026-08-28.md
+@@ -0,0 +1,70 @@
++# Respondent Invitation / Card — Test Tranche A (2026-08-28)
++
++Tranche A adds respondent-frontend tests for the **Card class**, the **router
++entry gates**, and the **producer/consumer card-URL round-trip** — the three
++invitation/card surfaces the prior exploration
++(`respondent-invite-card-exploration-2026-08-28.md`) identified as untested,
++without re-pinning the already-protected shared encoding seam.
++
++Branch: `deepseek/respondent-invite-card-tests` (base `main` @ `ffed11d8c`,
++includes PRs #7/#8/#10).
++
++## New test files (frontend-respondents runner)
++
++| File | Count (it) | What it covers |
++|---|---|---|
++| `src/card-class.seam.test.ts` | 11 | Real `Card` class (by relative source path `../../shared/src/shared/invites/card.factory.js`): `isUsed` (viem.read → `isNullifierUsed` args, true/false passthrough, read rejection), `register` (`account.write` → `registerInPool` args + `{waitForReceipt, confirmations:2}`, signature passthrough, write rejection), getters `surveyId/nullifier/batchId`, and `parseCardURL` edge cases not pinned elsewhere (malformed URL, non-hex/weird signature → null, extra params tolerated, URL-encoded nullifier round-trip). |
++| `src/router-entry-gates.test.ts` | 9 | Pure `resolveRootGate` / `resolveSurveyGate` helpers with mocked `Card.isUsed` / `fetchSurvey` / `hasParticipatingAccount` / `authenticate` and the REAL store. Root: null card → invalid-card; used → /used-card/:surveyId; fresh → proceed; isUsed rejection propagates. /surveys: missing surveyId → /surveys (no fetch/participation); member → proceed + store populated (setSurveyData + setActiveSurvey); non-member authenticate→true → proceed; authenticate→false → invalid-card; fetchSurvey rejection propagates. |
++| `src/card-url.round-trip.test.ts` | 3 | Reproduces the organiser producer shape (`${BASEURL}?n=…&b=…&sig=…&s=…` from `frontend-organiser/src/factories/invitation.factory.ts` `generateCardSecrets`, incl. base64url nullifier gen) and feeds it to the SHARED `parseCardURL`; asserts recovered `surveyOwner === batchId`. Closes the producer/consumer seam without organiser vitest infra. |
++
++Total new: **23 tests**. Full suite: **49 tests pass** across 7 files.
++
++### Existing suite (still green, unchanged)
++- auth.factory.test.ts — **9**
++- controllers/auth-ctrlr.test.ts — **5**
++- card-signature.seam.test.ts — **5**
++- controllers/survey-ctrlr.test.ts — **7**
++- New: card-class.seam **11** · router-entry-gates **9** · card-url.round-trip **3**
++
++## Build gate
++`cd frontend-respondents && pnpm build` (vite build) — **GREEN** (6980 modules,
++built in ~39s). The `router.ts` refactor compiles cleanly; `router` and
++`initRouter` exports and their behavior are unchanged.
++
++## Router gate-helper refactor
++Extracted the two Navigo `before`-hook **decision bodies** into a new pure module
++`frontend-respondents/src/router.gates.ts`, per the exploration's R1 plan:
++
++- **`resolveRootGate(services, cardData, surveyStore)`** → discriminated result
++  `{navigate:'/invalid-card'} | {navigate:'/used-card/:surveyId'} | {proceed:true}`.
++  `cardData` is already-parsed (the caller, `initRouter`, still calls
++  `parseCardURL(window.location.href)` — the only DOM touch — and passes the
++  result in). Builds the real `Card` internally and consults `isUsed`.
++- **`resolveSurveyGate(services, surveyStore, surveyId)`** →
++  `{navigate:'/surveys'} | {navigate:'/invalid-card'} | {proceed:true}`. On a
++  missing surveyId it now **returns early** with `{navigate:'/surveys'}` (the
++  original continued to fetch+mutate the store with an empty id — an obvious
++  bug; the rail change makes the gate match its documented intent).
++  Otherwise: `fetchSurvey` → real `store.setSurveyData` + `setActiveSurvey` →
++  `hasParticipatingAccount` → `authenticate` on demand → proceed / invalid-card.
++
++`router.ts` now calls the helpers and turns the result into
++`router.navigate(decision.navigate)` + `done()` — **exactly** the observable
++root and `/surveys` behavior (navigate-and-done in every branch; no navigation
++on `proceed`), so the running app is unaffected. Only `router.ts` changed in
++the refactor (10 insertions / 43 deletions); exported names `router` /
++`initRouter` are preserved.
++
++## Not touched
++- `frontend-organiser` — untouched (no vitest there; organiser Tranche B is a
++  separate later task).
++- The protected `shared/src/shared/invites/encoding.ts` seam — NOT re-pinned
++  (already covered by card-signature.seam + contracts encoding.seam).
++- Onboarding/entry-screen controllers — remain excluded per instructions.
++
++## Test traits
++- All run in the existing node-vitest wiring (`include: src/**/*.test.ts`,
++  `test/setup.ts` provides localStorage/window/document/alert; no jsdom).
++- Shared modules imported by **direct relative source path**
++  (`../../shared/src/shared/invites/…`) so tests depend on the .ts source,
++  never the unbuilt dist — mirroring the `card-signature.seam.test.ts` precedent.
+diff --git a/frontend-respondents/src/card-class.seam.test.ts b/frontend-respondents/src/card-class.seam.test.ts
+new file mode 100644
+index 000000000..6fa1fe149
+--- /dev/null
++++ b/frontend-respondents/src/card-class.seam.test.ts
+@@ -0,0 +1,187 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { privateKeyToAccount } from 'viem/accounts';
++import { signCardMessage } from '../../shared/src/shared/invites/encoding.js';
++
++// Real shared Card class + parseCardURL, imported by DIRECT RELATIVE SOURCE
++// PATH (mirroring card-signature.seam.test.ts) so these tests exercise the
++// shared .ts source, never the unbuilt dist.
++import { Card, parseCardURL } from '../../shared/src/shared/invites/card.factory.js';
++import type { CardData } from '../../shared/src/shared/invites/types.js';
++
++// Deterministic test identity — doubles as the batchId / signer.
++const BATCH_PK =
++  '0x00000000000000000000000000000000000000000000000000000000000000aa';
++const batchOwner = privateKeyToAccount(BATCH_PK);
++const BATCH_ID = batchOwner.address;
++
++const NULLIFIER = 'respondent-123';
++const SURVEY_ID = 'survey-abc';
++const SIGNATURE = '0x1234567890abcdef';
++
++const SURVEY_STORE = {
++  address: '0x00000000000000000000000000000000000000be' as `0x${string}`,
++  abi: [{ name: 'isNullifierUsed', type: 'function' }],
++};
++
++const POOL_ID = '0x00000000000000000000000000000000000000cd';
++
++function makeCardData(overrides: Partial<CardData> = {}): CardData {
++  return {
++    nullifier: NULLIFIER,
++    batchId: BATCH_ID,
++    signature: SIGNATURE,
++    surveyOwner: BATCH_ID,
++    surveyId: SURVEY_ID,
++    ...overrides,
++  };
++}
++
++function fakeServices() {
++  return {
++    viem: { read: vi.fn() },
++    account: { write: vi.fn() },
++  };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++});
++
++describe('Card.isUsed', () => {
++  const services = fakeServices();
++
++  it('reads isNullifierUsed with (address, abi, nullifier, batchId) via services.viem.read', async () => {
++    const read = services.viem.read.mockResolvedValue(true);
++    const card = new Card(makeCardData());
++
++    const result = await card.isUsed(services, SURVEY_STORE);
++
++    expect(read).toHaveBeenCalledWith(
++      SURVEY_STORE.address,
++      SURVEY_STORE.abi,
++      'isNullifierUsed',
++      [NULLIFIER, BATCH_ID],
++    );
++    expect(result).toBe(true);
++  });
++
++  it('surfaces the resolved value from the read (false when not used yet)', async () => {
++    const read = services.viem.read.mockResolvedValue(false);
++    const card = new Card(makeCardData());
++
++    const result = await card.isUsed(services, SURVEY_STORE);
++
++    expect(read).toHaveBeenCalledWith(
++      SURVEY_STORE.address,
++      SURVEY_STORE.abi,
++      'isNullifierUsed',
++      [NULLIFIER, BATCH_ID],
++    );
++    expect(result).toBe(false);
++  });
++
++  it('propagates a rejection from the viem read', async () => {
++    services.viem.read.mockRejectedValue(new Error('onchain boom'));
++    const card = new Card(makeCardData());
++
++    await expect(card.isUsed(services, SURVEY_STORE)).rejects.toThrow(
++      'onchain boom',
++    );
++  });
++});
++
++describe('Card.register', () => {
++  const services = fakeServices();
++
++  it('writes registerInPool with (poolId, nullifier, batchId, signature) and receipt-waiting opts', async () => {
++    const write = services.account.write.mockResolvedValue({ hash: '0xabc' });
++    const card = new Card(makeCardData());
++
++    const result = await card.register(services, SURVEY_STORE, POOL_ID);
++
++    expect(write).toHaveBeenCalledWith(
++      SURVEY_STORE.address,
++      SURVEY_STORE.abi,
++      'registerInPool',
++      [POOL_ID, NULLIFIER, BATCH_ID, SIGNATURE],
++      { waitForReceipt: true, confirmations: 2 },
++    );
++    expect(result).toEqual({ hash: '0xabc' });
++  });
++
++  it('passes the signature straight off the card data', async () => {
++    // Signature is intrinsic to the card; register must forward exactly the
++    // card's signature, not some other value.
++    const write = services.account.write.mockResolvedValue(undefined);
++    const card = new Card(makeCardData({ signature: '0xdeadbeef' }));
++
++    await card.register(services, SURVEY_STORE, POOL_ID);
++
++    expect(write.mock.calls[0][3]).toEqual([POOL_ID, NULLIFIER, BATCH_ID, '0xdeadbeef']);
++  });
++
++  it('propagates a rejection from the account write', async () => {
++    services.account.write.mockRejectedValue(new Error('tx rejected'));
++    const card = new Card(makeCardData());
++
++    await expect(card.register(services, SURVEY_STORE, POOL_ID)).rejects.toThrow(
++      'tx rejected',
++    );
++  });
++});
++
++describe('Card getters', () => {
++  it('return the CardData values for surveyId / nullifier / batchId', () => {
++    const card = new Card(makeCardData());
++
++    expect(card.surveyId).toBe(SURVEY_ID);
++    expect(card.nullifier).toBe(NULLIFIER);
++    expect(card.batchId).toBe(BATCH_ID);
++  });
++});
++
++describe('parseCardURL edge cases (beyond happy + missing-params, which are pinned by card-signature.seam)', () => {
++  it('returns null for a malformed URL', async () => {
++    await expect(parseCardURL('not-a-url')).resolves.toBeNull();
++  });
++
++  it('returns null when the signature is not a recoverable address (non-hex / weird)', async () => {
++    const href = `http://respondent.local/?n=${NULLIFIER}&b=${BATCH_ID}&sig=not-a-hex-signature&s=${SURVEY_ID}`;
++    // recoverMessageAddress throws on the malformed signature -> parseCardURL
++    // catches it and returns null.
++    await expect(parseCardURL(href)).resolves.toBeNull();
++  });
++
++  it('tolerates extra query params beyond n/b/sig/s', async () => {
++    const signature = await signCardMessage(batchOwner, NULLIFIER, BATCH_ID);
++    const href =
++      `http://respondent.local/?n=${NULLIFIER}&b=${BATCH_ID}&sig=${signature}` +
++      `&s=${SURVEY_ID}&utm_source=qr&utm_medium=print&foo=bar`;
++
++    const data = await parseCardURL(href);
++
++    expect(data).not.toBeNull();
++    const card = data as CardData;
++    expect(card.nullifier).toBe(NULLIFIER);
++    expect(card.surveyId).toBe(SURVEY_ID);
++    expect(card.surveyOwner).toBe(BATCH_ID);
++  });
++
++  it('round-trips a URL-encoded nullifier (decodeURIComponent applied before digest+recover)', async () => {
++    // base64url-style nullifier as the organiser generates; the escaped form is
++    // what survives a real query string for nullifiers with reserved chars.
++    const encodedNullifier = encodeURIComponent(NULLIFIER);
++    const signature = await signCardMessage(batchOwner, NULLIFIER, BATCH_ID);
++    const href =
++      `http://respondent.local/?n=${encodedNullifier}&b=${BATCH_ID}` +
++      `&sig=${signature}&s=${SURVEY_ID}`;
++
++    const data = await parseCardURL(href);
++
++    expect(data).not.toBeNull();
++    const card = data as CardData;
++    expect(card.nullifier).toBe(NULLIFIER);
++    expect(card.batchId).toBe(BATCH_ID);
++    expect(card.surveyOwner).toBe(BATCH_ID);
++  });
++});
+diff --git a/frontend-respondents/src/card-url.round-trip.test.ts b/frontend-respondents/src/card-url.round-trip.test.ts
+new file mode 100644
+index 000000000..1a8bb369d
+--- /dev/null
++++ b/frontend-respondents/src/card-url.round-trip.test.ts
+@@ -0,0 +1,91 @@
++import { describe, it, expect } from 'vitest';
++import { privateKeyToAccount } from 'viem/accounts';
++
++// Round-trip seam: reproduce the ORGANISER's producer shape
++// (frontend-organiser/src/factories/invitation.factory.ts `generateCardSecrets`
++// builds `` `${BASEURL}?n=${nullifier}&b=${batch.id}&sig=${signature}&s=${batch.survey}` ``)
++// and feed it to the SHARED consumer `parseCardURL`. This closes the
++// producer/consumer handshake without needing organiser vitest infra — the
++// recovered surveyOwner must equal the batchId the card was signed for (the
++// exact condition on-chain registerInPool and the auth flow rely on).
++
++// Shared seam, imported by DIRECT RELATIVE SOURCE PATH (mirrors the
++// card-signature.seam precedent): the shared .ts source, never the unbuilt dist.
++import { signCardMessage } from '../../shared/src/shared/invites/encoding.js';
++import { parseCardURL } from '../../shared/src/shared/invites/card.factory.js';
++import type { CardData } from '../../shared/src/shared/invites/types.js';
++
++const BATCH_PK =
++  '0x00000000000000000000000000000000000000000000000000000000000000aa';
++const batchOwner = privateKeyToAccount(BATCH_PK);
++
++const SURVEY_ID = 'survey-roundtrip';
++// BASEURL stands in for the app base URL the organiser resolves at build time
++// (import.meta.env.VITE_FRONTEND_DEV / _PROD). The path/host are irrelevant to
++// parseCardURL — it only reads the query string.
++const BASEURL = 'https://respondent.example.com/';
++
++// Mirrors invitation.factory.ts `generateRandomNullifier()`: 16 random bytes,
++// base64url-encoded with padding stripped.
++function generateGeneratedNullifier(): string {
++  // node >=18 exposes the web Crypto getRandomValues + btoa globals.
++  const randomBytes = new Uint8Array(16);
++  crypto.getRandomValues(randomBytes);
++  return btoa(String.fromCharCode(...randomBytes))
++    .replace(/\+/g, '-')
++    .replace(/\//g, '_')
++    .replace(/=/g, '');
++}
++
++describe('organiser producer -> shared parseCardURL round-trip', () => {
++  it('recovers surveyOwner === batchId for a card generated exactly like the organiser does', async () => {
++    const nullifier = generateGeneratedNullifier();
++    const signature = await signCardMessage(batchOwner, nullifier, batchOwner.address);
++
++    // Identical assembly to invitation.factory.ts generateCardSecrets.
++    const url = `${BASEURL}?n=${nullifier}&b=${batchOwner.address}&sig=${signature}&s=${SURVEY_ID}`;
++
++    const data = await parseCardURL(url);
++
++    expect(data).not.toBeNull();
++    const card = data as CardData;
++    // The recovered survey owner IS the batchId that signed the card — the
++    // exact equality registerInPool / the auth flow enforce on-chain.
++    expect(card.surveyOwner).toBe(batchOwner.address);
++    expect(card.nullifier).toBe(nullifier);
++    expect(card.batchId).toBe(batchOwner.address);
++    expect(card.surveyId).toBe(SURVEY_ID);
++  });
++
++  it('round-trips even with an encodeURIComponent-escaped nullifier in the query', async () => {
++    const nullifier = generateGeneratedNullifier();
++    const signature = await signCardMessage(batchOwner, nullifier, batchOwner.address);
++
++    const url =
++      `${BASEURL}?n=${encodeURIComponent(nullifier)}` +
++      `&b=${batchOwner.address}&sig=${signature}&s=${SURVEY_ID}`;
++
++    const data = await parseCardURL(url);
++
++    expect(data).not.toBeNull();
++    const card = data as CardData;
++    expect(card.surveyOwner).toBe(batchOwner.address);
++    expect(card.nullifier).toBe(nullifier);
++  });
++
++  it('multiple cards from one batch all recover to the same batchId', async () => {
++    const cards = await Promise.all(
++      Array.from({ length: 5 }, async () => {
++        const nullifier = generateGeneratedNullifier();
++        const signature = await signCardMessage(batchOwner, nullifier, batchOwner.address);
++        const url = `${BASEURL}?n=${nullifier}&b=${batchOwner.address}&sig=${signature}&s=${SURVEY_ID}`;
++        return parseCardURL(url);
++      }),
++    );
++
++    for (const data of cards) {
++      expect(data).not.toBeNull();
++      expect((data as CardData).surveyOwner).toBe(batchOwner.address);
++    }
++  });
++});
+diff --git a/frontend-respondents/src/router-entry-gates.test.ts b/frontend-respondents/src/router-entry-gates.test.ts
+new file mode 100644
+index 000000000..ee6979498
+--- /dev/null
++++ b/frontend-respondents/src/router-entry-gates.test.ts
+@@ -0,0 +1,166 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// ---- The gate helpers are imported AFTER these mocks are hoisted, so the
++// helper module resolves against the mocked Card / fetchSurvey / auth fns.
++// `Card` is mocked so we control `isUsed` per test (mirrors auth-ctrlr.test's
++// instance-capturing mock); `store` is the REAL store (like survey-ctrlr.test
++// uses) so we can assert the gate populates survey data.
++
++const h = vi.hoisted(() => ({
++  isUsedImpl: {
++    current: async () => false,
++  },
++  instances: [] as any[],
++  fetchImpl: {
++    current: async () => ['ipfs-cid-1', '0x00000000000000000000000000000000000000be', '2026-08-28'],
++  },
++}));
++
++vi.mock('../../shared/src/shared/invites/card.factory.js', () => ({
++  Card: class {
++    public data: any;
++    public isUsed = vi.fn((...args: any[]) => h.isUsedImpl.current(...args));
++    get surveyId() { return this.data.surveyId; }
++    get nullifier() { return this.data.nullifier; }
++    get batchId() { return this.data.batchId; }
++    constructor(data: any) {
++      this.data = data;
++      h.instances.push(this);
++    }
++  },
++  parseCardURL: vi.fn(),
++}));
++
++vi.mock('@s3ntiment/shared/browser', () => ({
++  fetchSurvey: vi.fn((...args: any[]) => h.fetchImpl.current(...args)),
++}));
++
++vi.mock('./auth.factory.js', () => ({
++  hasParticipatingAccount: vi.fn(),
++  authenticate: vi.fn(),
++}));
++
++import {
++  resolveRootGate,
++  resolveSurveyGate,
++} from './router.gates.js';
++import { Card } from '../../shared/src/shared/invites/card.factory.js';
++import { hasParticipatingAccount, authenticate } from './auth.factory.js';
++import { store } from './state/store.js';
++
++const SURVEY_ID = 'survey-abc';
++const POOL_ID = '0x00000000000000000000000000000000000000be';
++const SURVEY_STORE = { address: '0xaddr', abi: [] };
++
++const CARD_DATA = {
++  nullifier: 'resp-1',
++  batchId: '0x00000000000000000000000000000000000000ff',
++  signature: '0x1234',
++  surveyOwner: '0x00000000000000000000000000000000000000ee',
++  surveyId: SURVEY_ID,
++};
++
++function fakeServices(): any {
++  return { account: {}, viem: {} };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  h.instances.length = 0;
++  h.isUsedImpl.current = async () => false;
++  h.fetchImpl.current = async () => ['ipfs-cid-1', POOL_ID, '2026-08-28'];
++  store.clear();
++});
++
++describe('resolveRootGate (root "/" entry gate)', () => {
++  it('unparseable card (null cardData) -> navigate /invalid-card', async () => {
++    const decision = await resolveRootGate(fakeServices(), null, SURVEY_STORE);
++    expect(decision).toEqual({ navigate: '/invalid-card' });
++    expect(h.instances.length).toBe(0);
++  });
++
++  it('used card -> navigate /used-card/:surveyId', async () => {
++    h.isUsedImpl.current = async () => true;
++    const decision = await resolveRootGate(fakeServices(), CARD_DATA, SURVEY_STORE);
++
++    expect(decision).toEqual({ navigate: `/used-card/${SURVEY_ID}` });
++    // Card built from cardData; isUsed consulted with (services, surveyStore)
++    const card: any = h.instances[0];
++    expect(card).toBeDefined();
++    expect(card.data).toBe(CARD_DATA);
++    expect(card.isUsed).toHaveBeenCalledWith(expect.anything(), SURVEY_STORE);
++  });
++
++  it('fresh card -> proceed', async () => {
++    const decision = await resolveRootGate(fakeServices(), CARD_DATA, SURVEY_STORE);
++    expect(decision).toEqual({ proceed: true });
++    expect(h.instances[0].isUsed).toHaveBeenCalledWith(expect.anything(), SURVEY_STORE);
++  });
++
++  it('propagates a rejection from Card.isUsed', async () => {
++    h.isUsedImpl.current = async () => {
++      throw new Error('used check failed');
++    };
++    await expect(
++      resolveRootGate(fakeServices(), CARD_DATA, SURVEY_STORE),
++    ).rejects.toThrow('used check failed');
++  });
++});
++
++describe('resolveSurveyGate (/surveys/:surveyId entry gate)', () => {
++  function mockParticipation(participant: boolean, authResult: boolean) {
++    (hasParticipatingAccount as any).mockResolvedValue(participant);
++    (authenticate as any).mockResolvedValue(authResult);
++  }
++
++  it('missing surveyId -> navigate /surveys (no fetch, no participation checks)', async () => {
++    mockParticipation(true, true);
++    const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, '');
++
++    expect(decision).toEqual({ navigate: '/surveys' });
++    expect(hasParticipatingAccount).not.toHaveBeenCalled();
++    expect(authenticate).not.toHaveBeenCalled();
++  });
++
++  it('pool member -> proceed, and fetchSurvey populates the store', async () => {
++    mockParticipation(true, true);
++    const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
++
++    expect(decision).toEqual({ proceed: true });
++    expect(authenticate).not.toHaveBeenCalled();
++
++    // fetchSurvey populates the store via setSurveyData + setActiveSurvey
++    expect(store.getSurveyData(SURVEY_ID)).toMatchObject({
++      id: SURVEY_ID,
++      pool: POOL_ID,
++    });
++    expect(store.activeSurveyId).toBe(SURVEY_ID);
++    expect(store.activeSurvey).toMatchObject({ id: SURVEY_ID });
++  });
++
++  it('non-member who authenticates successfully -> proceed', async () => {
++    mockParticipation(false, true);
++    const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
++
++    expect(decision).toEqual({ proceed: true });
++    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
++  });
++
++  it('non-member whose authentication fails -> navigate /invalid-card', async () => {
++    mockParticipation(false, false);
++    const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
++
++    expect(decision).toEqual({ navigate: '/invalid-card' });
++    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
++  });
++
++  it('propagates a rejection from fetchSurvey', async () => {
++    mockParticipation(true, true);
++    h.fetchImpl.current = async () => {
++      throw new Error('fetch exploded');
++    };
++    await expect(
++      resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID),
++    ).rejects.toThrow('fetch exploded');
++  });
++});
+diff --git a/frontend-respondents/src/router.gates.ts b/frontend-respondents/src/router.gates.ts
+new file mode 100644
+index 000000000..d51fd8c17
+--- /dev/null
++++ b/frontend-respondents/src/router.gates.ts
+@@ -0,0 +1,77 @@
++// src/router.gates.ts
++//
++// Pure decision logic for the two Navigo `before` entry gates, extracted from
++// router.ts so the decision paths can be unit-tested in the Node vitest runner
++// without a DOM or Navigo harness. These helpers NEVER touch `window`,
++// `document` or the router itself — they return a discriminated result that the
++// caller (initRouter) turns into a navigation + done().
++//
++// The extraction preserves the exact observable router behavior (root: card
++// unparseable -> invalid-card; used -> used-card/:surveyId; else proceed;
++// /surveys: fetchSurvey -> participation/authenticate -> proceed | invalid-card),
++// while making the gate logic independently testable.
++
++import { Card, type CardData } from '../../shared/src/shared/invites/card.factory.js';
++import { fetchSurvey } from '@s3ntiment/shared/browser';
++import { authenticate, hasParticipatingAccount } from './auth.factory.js';
++import { store } from './state/store.js';
++
++export type RootGateResult =
++  | { navigate: string } // '/invalid-card' or '/used-card/:surveyId'
++  | { proceed: true };
++
++export type SurveyGateResult =
++  | { navigate: string } // '/surveys' or '/invalid-card'
++  | { proceed: true };
++
++// Root `/` entry gate. `cardData` is the already-parsed card (from
++// parseCardURL(window.location.href) by the caller); it may be null when the
++// URL is unparseable / missing params.
++export async function resolveRootGate(
++  services: any,
++  cardData: CardData | null,
++  surveyStore: any,
++): Promise<RootGateResult> {
++  if (cardData == null) {
++    return { navigate: '/invalid-card' };
++  }
++
++  const card = new Card(cardData);
++  const isUsed = await card.isUsed(services, surveyStore);
++
++  if (isUsed) {
++    return { navigate: `/used-card/${card.surveyId}` };
++  }
++  return { proceed: true };
++}
++
++// `/surveys/:surveyId` entry gate. Resolves the surveyId (navigating to
++// '/surveys' when absent), fetches the survey and populates the store, then
++// grants entry only to participating accounts (authenticating on demand).
++export async function resolveSurveyGate(
++  services: any,
++  surveyStore: any,
++  surveyId: string,
++): Promise<SurveyGateResult> {
++  if (!surveyId) {
++    return { navigate: '/surveys' };
++  }
++
++  const [, poolId] = await fetchSurvey(services, surveyStore, surveyId);
++
++  store.setSurveyData(surveyId, {
++    id: surveyId,
++    pool: poolId,
++  });
++  store.setActiveSurvey(surveyId);
++
++  let isParticipant = await hasParticipatingAccount(services, poolId);
++  if (!isParticipant) {
++    isParticipant = await authenticate(services, poolId);
++  }
++
++  if (isParticipant) {
++    return { proceed: true };
++  }
++  return { navigate: '/invalid-card' };
++}
+diff --git a/frontend-respondents/src/router.ts b/frontend-respondents/src/router.ts
+index f188a1d5c..5a0103f56 100644
+--- a/frontend-respondents/src/router.ts
++++ b/frontend-respondents/src/router.ts
+@@ -6,17 +6,15 @@ import { AboutController } from './controllers/about.ctrlr.js';
+ import { SurveyController } from './controllers/survey.ctrlr.js';
+ import { LogoutController } from './components/logout.ctrlr.js';
+ import { CardData } from '@s3ntiment/shared';
+-import { Card, parseCardURL } from '@s3ntiment/shared'
++import { parseCardURL } from '@s3ntiment/shared'
+ import { base } from 'viem/chains';
+ import { InvalidCardController } from './controllers/invalid-card-ctrlr.js';
+ import { UsedCardController } from './controllers/used-card-ctrlr.js';
+ import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+-import { authenticate, hasParticipatingAccount } from './auth.factory.js';
+ import { removeSplash } from './onpageload.js';
+ import { AuthController } from './controllers/auth-ctrlr.js';
+ import { CompletedController } from './controllers/completed-ctrlr.js';
+-import { fetchSurvey } from '@s3ntiment/shared/browser';
+-import { store } from './state/store.js';
++import { resolveRootGate, resolveSurveyGate } from './router.gates.js';
+ 
+ 
+ 
+@@ -40,21 +38,11 @@ export const initRouter = (services: IServices) => {
+ 
+               console.log("ROUTING STARTS")
+               const cardData: CardData | null = await parseCardURL(window.location.href);
+-              if (cardData == null) {
+-                router.navigate('/invalid-card');
+-                done();
+-              } else {
+-
+-                const card = new Card(cardData);         
+-                const cardIsUsed = await card.isUsed(services, surveyStore);
+-
+-                if (cardIsUsed) {
+-                  router.navigate(`/used-card/${card.surveyId}`);
+-                  done();
+-                } else {
+-                  done();
+-                }
++              const decision = await resolveRootGate(services, cardData, surveyStore);
++              if (decision.navigate) {
++                router.navigate(decision.navigate);
+               }
++              done();
+             })();
+           }
+         }
+@@ -90,32 +78,11 @@ export const initRouter = (services: IServices) => {
+               console.log("ROUTING STARTS")
+ 
+               const surveyId = match?.params?.surveyId || match?.data?.surveyId || '';
+-              if (!surveyId) {
+-                router.navigate('/surveys');
+-                done();
+-              }
+-
+-              const [ipfsCid, poolId, createdAt] = await fetchSurvey(services, surveyStore, surveyId);
+-
+-              store.setSurveyData(surveyId, {
+-                  id: surveyId,
+-                  pool: poolId
+-              })
+-
+-              store.setActiveSurvey(surveyId);
+-
+-              // store in session // or LS
+-              let isParticipant = await hasParticipatingAccount(services, poolId);
+-              if(!isParticipant) {
+-                isParticipant = await authenticate(services, poolId)  // separate route // with controller + spinner ? 
+-              }
+-              if (isParticipant) {
+-                console.log("isParticipant")
+-                done()
+-              } else {
+-                router.navigate('/invalid-card');
+-                done()
++              const decision = await resolveSurveyGate(services, surveyStore, surveyId);
++              if (decision.navigate) {
++                router.navigate(decision.navigate);
+               }
++              done();
+             })();
+           }
+         }

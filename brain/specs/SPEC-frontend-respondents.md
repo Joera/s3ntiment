@@ -87,3 +87,21 @@ but anonymous* — worth keeping straight in copy.
   checked-in action is suspicious: either it predates DR-L4 or it serves a different purpose. Diff
   them before assuming equivalence.
 - OPRF internals and the card-scan UI remain ⚠ UNVERIFIED (GAP-8, SPEC-00).
+- **GAP: `SurveyController` pool-config chicken-and-egg / first-render reachability (2026-08-28, PR #10).**
+  `render()` needs `poolConfig.pkpId` to call `fetchAndDecryptSurveyWithRespondent` (which passes it into
+  `services.lit.decrypt`), but the pool config (`pkpId`/`pkpDid`) is only available *after* the survey is
+  decrypted — it lives on the decrypted `EncryptedConfig.config`, the same field the backend reads as
+  `surveyConfig.config`. PR #10 fixed the immediate bug (`SurveyController.this.pool` was never assigned, so
+  the success path always threw on `this.pool!.config`; now `this.poolConfig` is plumbed out of the decrypted
+  `config`), but on a **fresh controller's first `render()`** `this.poolConfig` is still `undefined` when
+  forwarded into the decrypt fn, which dereferences `poolConfig.pkpId` and throws — the first render still
+  lands in `renderWarning` until a subsequent render populates `poolConfig`.
+  ⚠ There is ALSO a spec-vs-code discrepancy: this spec (§Key files) and the code comment say pool identity /
+  `pkpId`/`pkpDid` come from the **`PoolStore`** (`store.getPool(...).config`), but that store has **no
+  `setPool`/populate callers anywhere** in `frontend-respondents`, so `getPool()` always returns `undefined` —
+  and the controller never reads it. The config is not sourced before first decrypt and not available from
+  the store in practice. Likely to surface when the complete flow is exercised in a live env (the user
+  remembers being confused by exactly this before).
+  **Resolution direction (TBD):** source `poolConfig` before the first decrypt (e.g. a prior pool fetch that
+  populates `PoolStore`, or having the shared decrypt fn tolerate a missing `pkpId` on first call), and/or
+  reconcile the PoolStore-population gap. Not blocking the PR #10 test tranche; to-be-done.

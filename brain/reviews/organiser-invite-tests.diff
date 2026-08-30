@@ -1,0 +1,685 @@
+diff --git a/brain/audits/organiser-invite-tests-2026-08-28.md b/brain/audits/organiser-invite-tests-2026-08-28.md
+new file mode 100644
+index 000000000..139d27f80
+--- /dev/null
++++ b/brain/audits/organiser-invite-tests-2026-08-28.md
+@@ -0,0 +1,141 @@
++# Organiser Frontend — Invite/Card Test Tranche B (2026-08-28)
++
++**Status:** implement — landed
++**Branch:** `deepseek/organiser-invite-tests`
++**Base state:** `main` `f23d0dfd3` (includes respondent invitation/card tests from PR #11)
++**Mission:** mirror the `frontend-respondents` vitest wiring into `@s3ntiment/frontend-organiser`
++and pin the producer half of the shared card-encoding handshake.
++
++---
++
++## Summary
++
++Wired vitest into `frontend-organiser` (which previously had **no** test runner — the `test`
++script just printed "Error: no test specified && exit 1"), then landed a first tranche of tests
++covering the organiser's card-generation surface (`invitation.factory`) plus the trivial `utils`
++helpers, and a bonus `survey.factory` suite. The centrepiece is a **producer→consumer round-trip
++seam test**: real `generateCardSecrets` output fed into the real shared `parseCardURL`, with the
++recovered `surveyOwner === batch.id` — the exact equality on-chain `registerInPool` and the
++respondent auth flow enforce.
++
++**Results:** `28 passed` across 4 files (below). `build` stays green. No production source changed.
++
++| File | Count |
++|---|---|
++| `src/factories/invitation.factory.test.ts` | 14 |
++| `src/factories/survey.factory.test.ts` | 3 |
++| `src/utils/hex.test.ts` | 4 |
++| `src/utils/regex.test.ts` | 7 |
++| **Total** | **28** |
++
++---
++
++## Infra (mirrors respondents verbatim)
++
++- **`package.json`** — added `"vitest": "^4.1.11"` to devDeps; `test` script → `"vitest run"`.
++- **`vitest.config.ts`** (new) — `environment: 'node'` (no jsdom), `include: ['src/**/*.test.ts']`,
++  `setupFiles: ['./test/setup.ts']`, `reporters: ['default']`, `resolve.alias` mapping
++  `react`/`react-dom` → `src/empty-module.ts`, **plus** a `define` for
++  `import.meta.env.VITE_FRONTEND_DEV` (see R2 below).
++- **`test/setup.ts`** (new) — copied respondent stub verbatim: in-memory `localStorage`,
++  `window = { location: { href: '' } }`, `document = { querySelector: () => null }`, `alert`.
++
++### R2 — `import.meta.env` BASEURL
++`invitation.factory.ts` reads
++`BASEURL = import.meta.env.VITE_PROD == "true" ? VITE_FRONTEND_PROD : VITE_FRONTEND_DEV` at
++module scope. Under vitest `import.meta.env` otherwise resolves to `{}` → `BASEURL` undefined →
++malformed URLs. Per the exploration's recommendation we used the **define-route** (no production
++refactor): `define: { 'import.meta.env.VITE_FRONTEND_DEV': 'https://organiser.local/' }`.
++`VITE_PROD` is left unset so the else-branch is taken deterministically. The URL host is irrelevant
++to `parseCardURL` (it only reads the query string).
++
++### R3 — dependency graph / waap-OPRF-Lit leak
++- `invitation.factory.test.ts` **type-imports `IServices` only**; the production module's own
++  `import { IServices } from '../services/services'` is type-only, so we neutralize it with
++  `vi.mock('../services/services', () => ({}))` — nothing from `services.ts` / `auth.factory.ts`
++  (waap/OPRF/Lit) is ever loaded at module scope.
++- `@s3ntiment/shared`'s package `exports` resolve to **unbuilt `dist`** in a fresh checkout. The
++  only runtime value `invitation.factory` needs from it is the **real `signCardMessage`** (used
++  inside `generateCardSecrets`), so we re-export it via
++  `vi.mock('@s3ntiment/shared', async () => { const enc = await import('../../../shared/src/shared/invites/encoding.js'); return { signCardMessage: enc.signCardMessage }; })`
++  — the **relative-source-path precedent** from the respondents. The shared `.ts` source is used,
++  never a stub and never a possibly-stale dist.
++
++### R4 / R5
++- Browser globals used (`crypto.getRandomValues`, `randomUUID`, `btoa`, `Blob`, `URL`) all exist
++  in Node ≥18 — no jsdom.
++- Shared consumer (`parseCardURL`) + encoding imported by direct relative source path
++  (`../../../shared/src/shared/invites/...`), matching the respondent `card-signature.seam` and
++  `card-url.round-trip` precedent.
++
++---
++
++## Test files
++
++### `src/factories/invitation.factory.test.ts` (14)
++- **`createBatchWallet` (4):** returns a valid `0x` 40-hex address + an in-memory account object
++  (`batchId === batchAccount.address`); deterministic batchId for a fixed mocked
++  `services.safe.signMessage`; private key never serialized (asserts the derived
++  `keccak256(toBytes(sig))` secret hex is absent from the output, and the public surface is exactly
++  `{ batchId, batchAccount }`); different signatures → different batchIds (proving keccak
++  derivation).
++- **`generateCardSecrets` (6):** returns `batch.amount` cards; unique base64url-shaped nullifiers
++  (`/^[A-Za-z0-9_-]{22}$/` — 16 bytes → 22 chars after padding strip); each `card.url` matches the
++  frozen shape `${BASEURL}?n=…&b=…&sig=…&s=…`; every card has `svgString` and `QRCode.toString`
++  is called with the url; **CROWN JEWEL** — every produced `card.url` round-trips through the real
++  shared `parseCardURL` with `surveyOwner === batch.id` + nullifier/surveyId/batchId recovery;
++  nullifiers contain no URL-special chars (base64url, padding stripped).
++- **`createCsvFile` (3):** quoted + newline-joined CSV string in a `text/csv` Blob
++  (`"a","b"`), `saveAs` called with `` `${filename}.csv` ``, values with commas/quotes still quoted.
++- **`createZipFile` (1):** `saveAs` called with `s3ntiment-qr-codes-<surveyId>.zip` and a non-empty
++  Blob (real JSZip).
++
++### `src/factories/survey.factory.test.ts` (3) — OPTIONAL, included
++The module's `s3ntiment-contracts … S3ntimentSurveyStore.json` `assert { type: 'json' }` import and
++the `permissionless/accounts` import loaded cleanly under the node runner (no heavy mocking
++needed), so per the mission allowance this bonus suite was included:
++- **`createBatch` (2):** with `createBatchWallet`/`generateCardSecrets`/`uploadToPinata` mocked —
++  asserts `batch.id = getAddress(batchId)`, `batch.survey`/`batch.pool` set, `generateCardSecrets`
++  called with the derived `batchAccount` + batch, and cards `uploadToPinata`'d.
++- **`registerBatch` (1):** `services.account.write` mock → `('registerBatch', [batch.pool, batch.id], { waitForReceipt: true })`.
++
++> Note: the "dropped if it drags the graph" fallback did **not** trigger — survey.factory imported
++> cleanly and the suite is included.
++
++### `src/utils/hex.test.ts` (4)
++`ensureHex`: valid plain hex → `0x…`; normalizes existing `0x`/`0X` prefix + lowercases mixed case;
++throws on empty; throws on non-hex/malformed.
++
++### `src/utils/regex.test.ts` (7)
++`isCid` v0+v1 accept/reject; `isDid` accept/reject; `isDidKey` accept/reject.
++
++---
++
++## Acceptance gates (all hold)
++
++```
++pnpm --filter @s3ntiment/frontend-organiser test   # 4 files, 28 passed
++pnpm --filter @s3ntiment/frontend-organiser build  # ✓ built in ~1m16s (existing chunk-size warning only)
++```
++
++Other packages unaffected: `frontend-respondents` suite still `49 passed (7 files)`. The `pnpm
++install` ran `shared`'s `prepublishOnly` (tsc) building `shared/dist`, but `shared/dist` is
++gitignored and no shared source changed.
++
++- **No production source changed** (define-route for BASEURL; `services.ts` neutralized via mock).
++- **No jsdom, no network, no live chain** — signatures are produced/recovered offline via the real
++  shared `signCardMessage`/`parseCardURL`.
++- Non-vacuous assertions throughout (exact URL equality, on-chain equality, secret-absence).
++
++---
++
++## Gate commands (exact)
++
++```
++cd <worktree>/frontend-organiser
++pnpm exec vitest run           # or: pnpm test
++#  Test Files  4 passed (4)
++#  Tests       28 passed (28)
++
++pnpm build                     # ✓ built
++```
+diff --git a/frontend-organiser/package.json b/frontend-organiser/package.json
+index 0991f8111..dc4316b28 100644
+--- a/frontend-organiser/package.json
++++ b/frontend-organiser/package.json
+@@ -5,7 +5,7 @@
+   "main": "index.js",
+   "type": "module",
+   "scripts": {
+-    "test": "echo \"Error: no test specified\" && exit 1",
++    "test": "vitest run",
+     "dev": "vite",
+     "build": "NODE_OPTIONS='--max-old-space-size=16384'  vite build",
+     "preview": "vite preview"
+@@ -17,6 +17,7 @@
+   "devDependencies": {
+     "@types/d3": "^7.4.3",
+     "@types/node": "^24.10.9",
++    "vitest": "^4.1.11",
+     "glob": "^11.1.0",
+     "sass-embedded": "^1.97.3",
+     "vite": "^7.3.1",
+diff --git a/frontend-organiser/src/factories/invitation.factory.test.ts b/frontend-organiser/src/factories/invitation.factory.test.ts
+new file mode 100644
+index 000000000..b7d94d8ee
+--- /dev/null
++++ b/frontend-organiser/src/factories/invitation.factory.test.ts
+@@ -0,0 +1,256 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { privateKeyToAccount } from 'viem/accounts';
++import { getAddress, keccak256, toBytes } from 'viem';
++
++// --- Mocks (hoisted so vi.mock factories can reference them) ---
++const mocks = vi.hoisted(() => ({
++  saveAs: vi.fn(),
++  qrToString: vi.fn(),
++}));
++
++// QRCode default export (invitation.factory imports `import QRCode from 'qrcode'`).
++vi.mock('qrcode', () => ({ default: { toString: mocks.qrToString } }));
++// file-saver named export saveAs.
++vi.mock('file-saver', () => ({ saveAs: mocks.saveAs }));
++
++// R3: do NOT let services.ts / auth.factory.ts / the heavy waap-OPRF-Lit graph
++// load at module scope. invitation.factory imports `IServices` from
++// ../services/services ONLY as a type — at runtime it needs nothing from that
++// module, so we neutralize it with an empty mock (type-only import is erased).
++vi.mock('../services/services', () => ({}));
++
++// The one runtime value invitation.factory needs from @s3ntiment/shared is the
++// REAL `signCardMessage` (used inside generateCardSecrets). Its package exports
++// resolve to a possibly-unbuilt dist, so we re-export the real shared .ts
++// source by DIRECT RELATIVE SOURCE PATH (the respondent precedent) — keeping the
++// producer half of the handshake on the same on-chain bytes, never a stub.
++vi.mock('@s3ntiment/shared', async () => {
++  const enc = await import('../../../shared/src/shared/invites/encoding.js');
++  return { signCardMessage: enc.signCardMessage };
++});
++
++// --- Real shared consumer (crown-jewel round-trip), by relative source path ---
++import { parseCardURL } from '../../../shared/src/shared/invites/card.factory.js';
++import type { CardData } from '../../../shared/src/shared/invites/types.js';
++
++import {
++  createBatchWallet,
++  generateCardSecrets,
++  createCsvFile,
++  createZipFile,
++} from './invitation.factory';
++import type { Batch } from '@s3ntiment/shared';
++
++// Deterministic batch identity — doubles as the signer for generateCardSecrets.
++const BATCH_PK =
++  '0x00000000000000000000000000000000000000000000000000000000000000aa';
++const batchOwner = privateKeyToAccount(BATCH_PK);
++
++// Mirrors vitest.config.ts `define`: import.meta.env.VITE_FRONTEND_DEV.
++const BASEURL = 'https://organiser.local/';
++
++// Mirrors generateRandomNullifier(): 16 random bytes -> base64url, no padding.
++function generatedNullifier(): string {
++  const bytes = new Uint8Array(16);
++  crypto.getRandomValues(bytes);
++  return btoa(String.fromCharCode(...bytes))
++    .replace(/\+/g, '-')
++    .replace(/\//g, '_')
++    .replace(/=/g, '');
++}
++
++function makeBatch(overrides: Partial<Batch> = {}): Batch {
++  return {
++    id: batchOwner.address,
++    survey: 'survey-roundtrip',
++    pool: '0x0000000000000000000000000000000000000000000000000000000000000100',
++    amount: 5,
++    medium: 'zip-file',
++    cards: [],
++    ...overrides,
++  } as Batch;
++}
++
++describe('invitation.factory — createBatchWallet', () => {
++  beforeEach(() => {
++    mocks.qrToString.mockImplementation(() => Promise.resolve('<svg/>'));
++  });
++
++  it('returns a 0x address batchId and an in-memory batchAccount shape', async () => {
++    const services: any = {
++      safe: { signMessage: vi.fn().mockResolvedValue('0x' + '11'.repeat(32)) },
++    };
++    const { batchId, batchAccount } = await createBatchWallet(services);
++    // batchId is a valid 40-hex-char EOA address.
++    expect(batchId).toMatch(/^0x[0-9a-fA-F]{40}$/);
++    // batchAccount is the derived signing account (an object, not a secret key
++    // string); it is held in memory only.
++    expect(batchAccount).toBeTruthy();
++    expect(typeof batchAccount).toBe('object');
++    expect(batchAccount.address).toBe(getAddress(batchId));
++    // The derived account's address == the reported batchId.
++    expect(batchId).toBe(batchAccount.address);
++  });
++
++  it('derives a deterministic batchId from a fixed mocked signature', async () => {
++    const services: any = {
++      safe: { signMessage: vi.fn().mockResolvedValue('0x' + '22'.repeat(32)) },
++    };
++    const a = await createBatchWallet(services);
++    const b = await createBatchWallet(services);
++    // Same mocked signature -> same seed-independent batchId (deterministic).
++    expect(a.batchId).toBe(b.batchId);
++    expect(a.batchId).toMatch(/^0x[0-9a-fA-F]{40}$/);
++  });
++
++  it('does NOT return or persist a private key / secret', async () => {
++    const sig = '0x' + '33'.repeat(32);
++    const services: any = {
++      safe: { signMessage: vi.fn().mockResolvedValue(sig) },
++    };
++    // createBatchWallet derives the private key as keccak256(toBytes(signature)).
++    const derivedPrivKey = keccak256(toBytes(sig));
++    const result = await createBatchWallet(services);
++    // The public surface is { batchId, batchAccount } only.
++    expect(Object.keys(result).sort()).toEqual(['batchAccount', 'batchId']);
++    // batchAccount is an object with an address (never a raw private-key string),
++    // and the derived secret's hex value is NOT present in the serialized output.
++    expect(typeof result.batchAccount).toBe('object');
++    expect(result.batchAccount.address).toBe(getAddress(result.batchId));
++    expect(JSON.stringify(result)).not.toContain(derivedPrivKey.slice(2));
++  });
++
++  it('different mocked signatures yield different batchIds (keccak derives from the sig)', async () => {
++    const s1: any = { safe: { signMessage: vi.fn().mockResolvedValue('0x' + '44'.repeat(32)) } };
++    const s2: any = { safe: { signMessage: vi.fn().mockResolvedValue('0x' + '55'.repeat(32)) } };
++    const a = await createBatchWallet(s1);
++    const b = await createBatchWallet(s2);
++    expect(a.batchId).not.toBe(b.batchId);
++  });
++});
++
++describe('invitation.factory — generateCardSecrets', () => {
++  beforeEach(() => {
++    mocks.qrToString.mockReset();
++    mocks.qrToString.mockImplementation(() => Promise.resolve('<svg/>'));
++  });
++
++  it('returns exactly batch.amount cards', async () => {
++    const batch = makeBatch({ amount: 5 });
++    const cards = await generateCardSecrets(batchOwner, batch);
++    expect(cards).toHaveLength(5);
++  });
++
++  it('generates unique base64url nullifiers (22 chars for 16 bytes)', async () => {
++    const batch = makeBatch({ amount: 8 });
++    const cards = await generateCardSecrets(batchOwner, batch);
++    const nullifiers = cards.map((c) => c.nullifier);
++    expect(new Set(nullifiers).size).toBe(8); // all unique
++    for (const n of nullifiers) {
++      expect(n).toMatch(/^[A-Za-z0-9_-]{22}$/);
++    }
++  });
++
++  it('builds each card URL in the frozen producer shape', async () => {
++    const batch = makeBatch({ amount: 3, survey: 'survey-abc' });
++    const cards = await generateCardSecrets(batchOwner, batch);
++    for (const card of cards) {
++      const expected =
++        `${BASEURL}?n=${card.nullifier}&b=${batch.id}&sig=${card.signature}&s=${batch.survey}`;
++      expect(card.url).toBe(expected);
++    }
++  });
++
++  it('generates an SVG string for every card via QRCode.toString(url)', async () => {
++    const batch = makeBatch({ amount: 4 });
++    const cards = await generateCardSecrets(batchOwner, batch);
++    expect(mocks.qrToString).toHaveBeenCalledTimes(4);
++    for (const card of cards) {
++      expect(card.svgString).toBe('<svg/>');
++      expect(mocks.qrToString).toHaveBeenCalledWith(card.url, expect.any(Object));
++    }
++  });
++
++  it('CROWN JEWEL: every produced card URL round-trips through shared parseCardURL to surveyOwner === batch.id', async () => {
++    const batch = makeBatch({ amount: 5 });
++    const cards = await generateCardSecrets(batchOwner, batch);
++
++    for (const card of cards) {
++      // Real shared consumer (relative-source-path import), real shared
++      // signCardMessage (via @s3ntiment/shared mock re-export) — no stubs in the
++      // signature/URL path. This pins the producer half of the handshake to the
++      // exact bytes the respondents + on-chain registerInPool validate.
++      const parsed = await parseCardURL(card.url);
++      expect(parsed).not.toBeNull();
++      const data = parsed as CardData;
++      expect(data.surveyOwner).toBe(batch.id);
++      expect(data.nullifier).toBe(card.nullifier);
++      expect(data.batchId).toBe(batch.id);
++      expect(data.surveyId).toBe(batch.survey);
++    }
++  });
++
++  it('recovered nullifiers have no URL-special characters (base64url, padding stripped)', async () => {
++    const batch = makeBatch({ amount: 1 });
++    const [card] = await generateCardSecrets(batchOwner, batch);
++    expect(card.nullifier).not.toMatch(/[+/=]/);
++    // Deterministic example of the transform used by the producer.
++    const ref = generatedNullifier();
++    expect(ref).toMatch(/^[A-Za-z0-9_-]{22}$/);
++    expect(ref).not.toContain('=');
++  });
++});
++
++describe('invitation.factory — createCsvFile', () => {
++  beforeEach(() => {
++    mocks.saveAs.mockReset();
++  });
++
++  it('produces a quoted, newline-joined CSV string in a text/csv Blob', () => {
++    const values = ['alpha', 'beta', 'gamma'];
++    createCsvFile(values, 'invites');
++    const blob = mocks.saveAs.mock.calls[0][0];
++    expect(blob).toBeInstanceOf(Blob);
++    expect(blob.type).toBe('text/csv');
++    // Blob[string] is async; read synchronously via file() is not available in
++    // node without jsdom, so verify through blob.arrayBuffer().
++    return blob.arrayBuffer().then((buf: ArrayBuffer) => {
++      const text = Buffer.from(buf).toString('utf8');
++      expect(text).toBe('"alpha"\n"beta"\n"gamma"');
++    });
++  });
++
++  it('calls saveAs with `${filename}.csv`', () => {
++    createCsvFile(['x'], 'myInvites');
++    expect(mocks.saveAs).toHaveBeenCalledTimes(1);
++    expect(mocks.saveAs).toHaveBeenCalledWith(expect.any(Blob), 'myInvites.csv');
++  });
++
++  it('quotes every value, including ones containing commas/quotes', () => {
++    createCsvFile(['a,b', 'he said "hi"'], 'x');
++    const blob = mocks.saveAs.mock.calls[0][0];
++    return blob.arrayBuffer().then((buf: ArrayBuffer) => {
++      const text = Buffer.from(buf).toString('utf8');
++      expect(text).toBe('"a,b"\n"he said "hi""');
++    });
++  });
++});
++
++describe('invitation.factory — createZipFile', () => {
++  beforeEach(() => {
++    mocks.saveAs.mockReset();
++    mocks.qrToString.mockImplementation(() => Promise.resolve('<svg/>'));
++  });
++
++  it('calls saveAs with s3ntiment-qr-codes-<surveyId>.zip and a Blob', async () => {
++    const cards = await generateCardSecrets(batchOwner, makeBatch({ amount: 2 }));
++    await createZipFile(cards, 'survey-123');
++    expect(mocks.saveAs).toHaveBeenCalledTimes(1);
++    const [blob, name] = mocks.saveAs.mock.calls[0];
++    expect(blob).toBeInstanceOf(Blob);
++    expect(name).toBe('s3ntiment-qr-codes-survey-123.zip');
++    // Real JSZip output is a non-trivial zip archive.
++    const size = await blob.arrayBuffer().then((b: ArrayBuffer) => b.byteLength);
++    expect(size).toBeGreaterThan(0);
++  });
++});
+diff --git a/frontend-organiser/src/factories/survey.factory.test.ts b/frontend-organiser/src/factories/survey.factory.test.ts
+new file mode 100644
+index 000000000..b8c7d8104
+--- /dev/null
++++ b/frontend-organiser/src/factories/survey.factory.test.ts
+@@ -0,0 +1,91 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// survey.factory's only heavy/network surface is delegated to invitation.factory
++// (createBatchWallet / generateCardSecrets / uploadToPinata), which we mock here.
++vi.mock('./invitation.factory', () => ({
++  createBatchWallet: vi.fn(),
++  generateCardSecrets: vi.fn(),
++  uploadToPinata: vi.fn(),
++  createZipFile: vi.fn(),
++}));
++
++import {
++  createBatchWallet,
++  generateCardSecrets,
++  uploadToPinata,
++} from './invitation.factory';
++import { createBatch, registerBatch } from './survey.factory';
++
++const mockCreateBatchWallet = vi.mocked(createBatchWallet);
++const mockGenerateCardSecrets = vi.mocked(generateCardSecrets);
++const mockUploadToPinata = vi.mocked(uploadToPinata);
++
++const batchAccount: any = { address: '0x' + 'aa'.repeat(20) };
++const BATCH_ID = '0x' + 'ab'.repeat(20); // non-checksummed input to getAddress
++
++function makeBatch() {
++  return {
++    id: '',
++    survey: '',
++    pool: '',
++    amount: 3,
++    medium: 'zip-file',
++    cards: [] as any[],
++  } as any;
++}
++
++describe('survey.factory — createBatch', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++    mockCreateBatchWallet.mockResolvedValue({ batchId: BATCH_ID, batchAccount });
++    mockGenerateCardSecrets.mockResolvedValue([{ nullifier: 'n1' }]);
++    mockUploadToPinata.mockImplementation(async (_s: any, cards: any[]) => cards);
++  });
++
++  it('sets batch.id = getAddress(batchId), batch.survey and batch.pool', async () => {
++    const services: any = {};
++    const batch = makeBatch();
++    const out = await createBatch(services, batch, 'pool-1', 'survey-1');
++
++    expect(mockCreateBatchWallet).toHaveBeenCalledWith(services);
++    // getAddress normalizes to a checksummed 0x address.
++    expect(out.id).toMatch(/^0x[0-9a-fA-F]{40}$/);
++    expect(out.survey).toBe('survey-1');
++    expect(out.pool).toBe('pool-1');
++    // generateCardSecrets was called with the derived batchAccount + the batch.
++    expect(mockGenerateCardSecrets).toHaveBeenCalledWith(batchAccount, batch);
++  });
++
++  it('uploads generated cards to pinata with `${batchId}-${i}` names', async () => {
++    const services: any = {};
++    const batch = makeBatch();
++    const out = await createBatch(services, batch, 'pool-1', 'survey-1');
++
++    expect(mockUploadToPinata).toHaveBeenCalledTimes(1);
++    const [svc, cards] = mockUploadToPinata.mock.calls[0];
++    expect(svc).toBe(services);
++    expect(cards).toEqual([{ nullifier: 'n1' }]);
++    // The batch returned carries the uploaded cards (from uploadToPinata).
++    expect(out.cards).toEqual([{ nullifier: 'n1' }]);
++  });
++});
++
++describe('survey.factory — registerBatch', () => {
++  it('writes registerBatch with [batch.pool, batch.id] and waitForReceipt:true', async () => {
++    const write = vi.fn().mockResolvedValue('0xtx');
++    const services: any = { account: { write } };
++    const batch = makeBatch();
++    batch.pool = 'pool-9';
++    batch.id = '0x' + 'cd'.repeat(20);
++
++    await registerBatch(services, batch);
++
++    expect(write).toHaveBeenCalledTimes(1);
++    const [address, abi, fn, args, options] = write.mock.calls[0];
++    expect(address).toBeTruthy(); // surveyStore.address (real/mocked JSON import)
++    expect(abi).toBeTruthy();
++    expect(fn).toBe('registerBatch');
++    expect(args).toEqual([batch.pool, batch.id]);
++    expect(options).toEqual({ waitForReceipt: true });
++  });
++});
+diff --git a/frontend-organiser/src/utils/hex.test.ts b/frontend-organiser/src/utils/hex.test.ts
+new file mode 100644
+index 000000000..babc54ab6
+--- /dev/null
++++ b/frontend-organiser/src/utils/hex.test.ts
+@@ -0,0 +1,23 @@
++import { describe, it, expect } from 'vitest';
++import { ensureHex } from './hex';
++
++describe('utils/hex — ensureHex', () => {
++  it('returns a lowercased 0x-prefixed hex for a plain valid hex string', () => {
++    expect(ensureHex('abcd')).toBe('0xabcd');
++  });
++
++  it('normalizes an existing 0x prefix and lowercases mixed-case input', () => {
++    expect(ensureHex('0xAbCdEf')).toBe('0xabcdef');
++    expect(ensureHex('0X12AB')).toBe('0x12ab');
++  });
++
++  it('throws on an empty string', () => {
++    expect(() => ensureHex('')).toThrow(/empty/i);
++  });
++
++  it('throws on non-hex / malformed input', () => {
++    expect(() => ensureHex('0xzz')).toThrow(/invalid/i);
++    expect(() => ensureHex('12g4')).toThrow(/invalid/i);
++    expect(() => ensureHex('0x123 456')).toThrow(/invalid/i);
++  });
++});
+diff --git a/frontend-organiser/src/utils/regex.test.ts b/frontend-organiser/src/utils/regex.test.ts
+new file mode 100644
+index 000000000..185171d94
+--- /dev/null
++++ b/frontend-organiser/src/utils/regex.test.ts
+@@ -0,0 +1,42 @@
++import { describe, it, expect } from 'vitest';
++import { isCid, isDid, isDidKey } from './regex';
++
++describe('utils/regex — isCid', () => {
++  it('accepts a CIDv0 (Qm...) string', () => {
++    expect(isCid('Qm' + 'a'.repeat(44))).toBe(true);
++  });
++
++  it('accepts a CIDv1 (b...) string', () => {
++    expect(isCid('b' + 'a'.repeat(58))).toBe(true);
++  });
++
++  it('rejects non-CID / malformed strings', () => {
++    expect(isCid('not-a-cid')).toBe(false);
++    expect(isCid('Qm' + 'a'.repeat(40))).toBe(false); // too short
++    expect(isCid('b' + 'a'.repeat(20))).toBe(false); // < 58 chars
++  });
++});
++
++describe('utils/regex — isDid', () => {
++  it('accepts a well-formed did:method:identifier', () => {
++    expect(isDid('did:ethr:0x1234')).toBe(true);
++    expect(isDid('did:web:example.com')).toBe(true);
++  });
++
++  it('rejects malformed DID strings', () => {
++    expect(isDid('did')).toBe(false);
++    expect(isDid('did:ethr')).toBe(false);
++    expect(isDid('not-a-did')).toBe(false);
++  });
++});
++
++describe('utils/regex — isDidKey', () => {
++  it('accepts a well-formed did:key:z... string', () => {
++    expect(isDidKey('did:key:z' + '6Lp3oEkJ1o'.slice(0, 0) + 'A'.repeat(50))).toBe(true);
++  });
++
++  it('rejects malformed did:key strings', () => {
++    expect(isDidKey('did:key:abc')).toBe(false);
++    expect(isDidKey('did:ethr:0x1234')).toBe(false);
++  });
++});
+diff --git a/frontend-organiser/test/setup.ts b/frontend-organiser/test/setup.ts
+new file mode 100644
+index 000000000..75470db63
+--- /dev/null
++++ b/frontend-organiser/test/setup.ts
+@@ -0,0 +1,22 @@
++// vitest setup — runs before each test file's module graph is imported.
++//
++// Copied verbatim from frontend-respondents/test/setup.ts (the Tranche-A
++// precedent). Some organiser code under test touches browser globals at import
++// time (e.g. state stores reading localStorage in their constructors). Rather
++// than pulling in jsdom, we install minimal Node-side stubs for the few globals
++// the test graph touches. Tests may override these (window.location.href,
++// alert) per-case.
++
++(globalThis as any).localStorage = (() => {
++  const mem = new Map<string, string>();
++  return {
++    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
++    setItem: (k: string, v: string) => void mem.set(k, String(v)),
++    removeItem: (k: string) => void mem.delete(k),
++    clear: () => mem.clear(),
++  };
++})();
++
++(globalThis as any).window = { location: { href: '' } };
++(globalThis as any).document = { querySelector: () => null };
++(globalThis as any).alert = (_msg?: any) => {};
+diff --git a/frontend-organiser/vitest.config.ts b/frontend-organiser/vitest.config.ts
+new file mode 100644
+index 000000000..e93438f70
+--- /dev/null
++++ b/frontend-organiser/vitest.config.ts
+@@ -0,0 +1,33 @@
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  // Mirror the frontend-respondents vitest wiring verbatim (the Tranche-A
++  // precedent): logic tests run in the Node environment with no jsdom — any
++  // browser surface is stubbed via test/setup.ts + per-module vi.mock.
++  test: {
++    environment: 'node',
++    include: ['src/**/*.test.ts'],
++    setupFiles: ['./test/setup.ts'],
++    // Keep test output focused; files already log their own paths.
++    reporters: ['default'],
++  },
++  resolve: {
++    alias: {
++      // Mirror vite.config.js: neutralize any transitive React imports so the
++      // test graph can't accidentally pull React into the Node environment.
++      react: new URL('./src/empty-module.ts', import.meta.url).pathname,
++      'react-dom': new URL('./src/empty-module.ts', import.meta.url).pathname,
++    },
++  },
++  define: {
++    // invitation.factory.ts reads BASEURL from import.meta.env at module scope:
++    //   const BASEURL = import.meta.env.VITE_PROD == "true"
++    //     ? import.meta.env.VITE_FRONTEND_PROD
++    //     : import.meta.env.VITE_FRONTEND_DEV;
++    // Under vitest `import.meta.env` otherwise resolves to {} -> BASEURL would be
++    // undefined and every generated card URL malformed. Defining VITE_FRONTEND_DEV
++    // (and leaving VITE_PROD undefined so the else-branch is taken) gives a
++    // deterministic base URL with zero production refactor (R2, exploration §6).
++    'import.meta.env.VITE_FRONTEND_DEV': JSON.stringify('https://organiser.local/'),
++  },
++});
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 0b5e539d7..1a0ac12c4 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -220,6 +220,9 @@ importers:
+       vite-plugin-wasm:
+         specifier: ^3.5.0
+         version: 3.5.0(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
++      vitest:
++        specifier: ^4.1.11
++        version: 4.1.11(@types/node@24.10.14)(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+ 
+   frontend-respondents:
+     dependencies:

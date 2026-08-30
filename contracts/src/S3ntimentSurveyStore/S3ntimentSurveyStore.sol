@@ -50,7 +50,8 @@ pragma solidity ^0.8.0;
  *   - Batches are scoped to a pool, not a survey
  *   - Batch signers are immutable once registered — protects printed cards
  *   - The SMC is purely a gas abstraction — identity is ISMC(msg.sender).owner()
- *   - No events emitted — storage is read directly by Lit and frontend
+ *   - No events emitted (except Rotated, from rotateMember) — storage is read
+ *     directly by Lit and frontend
  */
 
 interface ISMC {
@@ -132,6 +133,15 @@ contract S3ntimentSurveyStore {
     error NullifierAlreadyUsed();
     error InvalidSignature();
     error AlreadyPoolMember();
+    error NotPoolMember();
+    error InvalidRotationTarget();
+
+    // -------------------------------------------------------------------------
+    // Events
+    // -------------------------------------------------------------------------
+
+    /// @dev Emitted when a member leaf rotates its own membership to a new leaf.
+    event Rotated(string poolId, address oldLeaf, address newLeaf);
 
     // -------------------------------------------------------------------------
     // Authority choke-point (single internal function)
@@ -483,6 +493,80 @@ contract S3ntimentSurveyStore {
     function revokeMember(string memory poolId, address member) external {
         _requirePoolSafe(poolId);
         poolMembers[poolId][member] = false;
+    }
+
+    /**
+     * @dev Self-authorizing on-chain membership rotation (RFC-001 §7.3 'second
+     *      transaction' / anchored-identity persist seam). Lets the CURRENT member
+     *      leaf rotate itself out to a new derived leaf S in ONE atomic contract
+     *      call, so persist can register a fresh leaf even though the entry card
+     *      is already spent (registerInPool reverts NullifierAlreadyUsed).
+     *
+     *      This is a self-service member action, exactly like registerInPool: it
+     *      is NOT routed through the _requirePoolSafe choke-point (that is for
+     *      operator/Safe store ops). Only the pool-existence guard is mirrored
+     *      from registerInPool.
+     *
+     *      Authorization ('signature of old stealth checked, then swap'):
+     *        digest = keccak256(abi.encode(poolId, oldLeaf, newLeaf,
+     *                                     address(this), block.chainid))
+     *        ethSignedHash = keccak256("\x19Ethereum Signed Message:\n32" + digest)
+     *      and oldLeaf is recovered via ECDSA from `signature` (the same
+     *      abi.encode + EIP-191 personal-sign convention the card/registerInPool
+     *      uses). The recovered signer MUST equal ISMC(msg.sender).owner() — the
+     *      caller is the smart account whose owner is the old leaf, so only the
+     *      member's own key + its own SMC can rotate that membership away. The
+     *      binding to poolId + newLeaf + this contract + chain prevents
+     *      cross-pool / cross-contract / cross-chain replay.
+     *
+     *      Replay safety: after a successful rotate, poolMembers[poolId][oldLeaf]
+     *      is false, so re-calling with the same signature reverts with
+     *      NotPoolMember — replay is naturally bounded with no nonce storage.
+     *
+     *      Note: this swaps on-chain membership only. The nilDB per-leaf did:key
+     *      record migration (E -> S) is OUT of contract scope and still required
+     *      separately (RFC-001 §6).
+     *
+     * @param poolId    Pool the current member belongs to
+     * @param newLeaf   The fresh derived leaf to rotate the membership onto
+     * @param signature ECDSA signature over the pool/leaf/contract/chain-bound
+     *                  digest, by the CURRENT member leaf's key
+     */
+    function rotateMember(
+        string memory poolId,
+        address newLeaf,
+        bytes memory signature
+    ) external {
+        // Pool-existence guard — self-service, like registerInPool (NOT Safe-gated).
+        if (pools[poolId].safe == address(0)) revert PoolNotFound();
+
+        // The current member leaf is the SMC owner (same identity resolution as
+        // registerInPool). Reject a zero-address owner / target.
+        address oldLeaf = ISMC(msg.sender).owner();
+        if (oldLeaf == address(0)) revert InvalidMemberAddress();
+        if (newLeaf == address(0)) revert InvalidRotationTarget();
+
+        // Recover the old leaf from the signature over the bound digest (mirrors
+        // registerInPool's abi.encode + EIP-191 personal-sign card convention).
+        bytes32 digest = keccak256(
+            abi.encode(poolId, oldLeaf, newLeaf, address(this), block.chainid)
+        );
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", digest)
+        );
+        address signer = _recoverSigner(ethSignedHash, signature);
+
+        // (a) The recovered signer must be the SMC owner: only the member's own
+        //     key driving its own SMC may rotate, never another holder's leaf.
+        if (signer != oldLeaf) revert InvalidSignature();
+        // (b) The old leaf must currently be a member of this pool.
+        if (!poolMembers[poolId][oldLeaf]) revert NotPoolMember();
+
+        // Atomic swap: old leaf out, new leaf in. roll back on any later revert
+        // is handled by Solidity; all checks above precede the state writes.
+        poolMembers[poolId][oldLeaf] = false;
+        poolMembers[poolId][newLeaf] = true;
+        emit Rotated(poolId, oldLeaf, newLeaf);
     }
 
     /**

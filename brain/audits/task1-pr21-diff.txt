@@ -1,0 +1,772 @@
+diff --git a/frontend-respondents/src/bootstrap.factory.test.ts b/frontend-respondents/src/bootstrap.factory.test.ts
+new file mode 100644
+index 000000000..5bd9df3d6
+--- /dev/null
++++ b/frontend-respondents/src/bootstrap.factory.test.ts
+@@ -0,0 +1,142 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// bootstrap.factory.ts sources its CSPRNG from viem/accounts generatePrivateKey
++// (noble-secp256k1 randomPrivateKey -> webcrypto). We mock it to assert the
++// load-or-create + persist contract deterministically; localStorage (installed by
++// test/setup.ts) is reset to a fresh in-memory map per test.
++vi.mock('viem/accounts', () => ({
++  generatePrivateKey: vi.fn(),
++}));
++
++import { generatePrivateKey } from 'viem/accounts';
++import {
++  ensureBootstrapKey,
++  createAndPersistBootstrapKey,
++} from './bootstrap.factory.js';
++import {
++  loadBootstrapKeyFromStorage,
++  BOOTSTRAP_STORAGE_KEY,
++} from './state/storage.js';
++
++// A well-formed 32-byte (64 hex char) 0x-prefixed private key.
++const GENERATED_KEY = `0x${'ab'.repeat(32)}`;
++const PERSISTED_KEY = `0x${'cd'.repeat(32)}`;
++const SIGNER_ADDR = '0x00000000000000000000000000000000000000aa';
++
++function installFreshLocalStorage() {
++  const mem = new Map<string, string>();
++  (globalThis as any).localStorage = {
++    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
++    setItem: (k: string, v: string) => void mem.set(k, String(v)),
++    removeItem: (k: string) => void mem.delete(k),
++    clear: () => mem.clear(),
++  };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  installFreshLocalStorage();
++  (generatePrivateKey as any).mockReturnValue(GENERATED_KEY);
++});
++
++describe('ensureBootstrapKey — random bootstrap leaf (load-or-create)', () => {
++  it('with no persisted key: generates a CSPRNG key, persists it immediately, and sets the signer', async () => {
++    const updateSignerWithKey = vi.fn().mockResolvedValue(SIGNER_ADDR);
++    const services = {
++      account: {
++        updateSignerWithKey,
++        getSignerAddress: vi.fn(() => SIGNER_ADDR),
++      },
++    } as any;
++
++    const address = await ensureBootstrapKey(services);
++
++    expect(address).toBe(SIGNER_ADDR);
++    // generated because nothing on disk
++    expect(generatePrivateKey).toHaveBeenCalledTimes(1);
++    // persisted at generation (RFC §7.1)
++    expect(localStorage.getItem(BOOTSTRAP_STORAGE_KEY)).toBe(GENERATED_KEY);
++    // fed to the smart-account signer (permissionless.simple.service updateSignerWithKey)
++    expect(updateSignerWithKey).toHaveBeenCalledWith(GENERATED_KEY);
++  });
++
++  it('with a persisted key: reuses it (no regeneration) and sets the signer from it', async () => {
++    // pre-existing bootstrap leaf from a prior visit
++    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, PERSISTED_KEY);
++
++    const updateSignerWithKey = vi.fn().mockResolvedValue(SIGNER_ADDR);
++    const services = {
++      account: {
++        updateSignerWithKey,
++        getSignerAddress: vi.fn(() => SIGNER_ADDR),
++      },
++    } as any;
++
++    const address = await ensureBootstrapKey(services);
++
++    expect(address).toBe(SIGNER_ADDR);
++    expect(generatePrivateKey).not.toHaveBeenCalled();
++    expect(updateSignerWithKey).toHaveBeenCalledWith(PERSISTED_KEY);
++    // the persisted value is untouched
++    expect(localStorage.getItem(BOOTSTRAP_STORAGE_KEY)).toBe(PERSISTED_KEY);
++  });
++
++  it('treats a malformed persisted value as absent and regenerates (persisting the fresh key)', async () => {
++    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, 'not-a-valid-key');
++
++    const services = {
++      account: {
++        updateSignerWithKey: vi.fn().mockResolvedValue(SIGNER_ADDR),
++        getSignerAddress: vi.fn(() => SIGNER_ADDR),
++      },
++    } as any;
++
++    await ensureBootstrapKey(services);
++
++    expect(generatePrivateKey).toHaveBeenCalledTimes(1);
++    expect(localStorage.getItem(BOOTSTRAP_STORAGE_KEY)).toBe(GENERATED_KEY);
++  });
++
++  it('persists the generated key even if setting the signer fails (RFC §7.1 — never orphan on tab close)', async () => {
++    const services = {
++      account: {
++        updateSignerWithKey: vi.fn().mockRejectedValue(new Error('signer failed')),
++        getSignerAddress: vi.fn(() => '0x'),
++      },
++    } as any;
++
++    await expect(ensureBootstrapKey(services)).rejects.toThrow('signer failed');
++
++    // the leaf was written to storage at generation, before the failed signer swap
++    expect(localStorage.getItem(BOOTSTRAP_STORAGE_KEY)).toBe(GENERATED_KEY);
++  });
++});
++
++describe('createAndPersistBootstrapKey', () => {
++  it('generates a fresh key and writes it to localStorage', () => {
++    const key = createAndPersistBootstrapKey();
++
++    expect(key).toBe(GENERATED_KEY);
++    expect(generatePrivateKey).toHaveBeenCalledTimes(1);
++    expect(localStorage.getItem(BOOTSTRAP_STORAGE_KEY)).toBe(GENERATED_KEY);
++  });
++});
++
++describe('loadBootstrapKeyFromStorage', () => {
++  it('returns null when nothing is stored', () => {
++    expect(loadBootstrapKeyFromStorage()).toBeNull();
++  });
++
++  it('returns the stored 0x-prefixed 64-hex key', () => {
++    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, PERSISTED_KEY);
++    expect(loadBootstrapKeyFromStorage()).toBe(PERSISTED_KEY);
++  });
++
++  it('returns null for malformed stored values (non-hex / wrong length)', () => {
++    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, '0xzz');
++    expect(loadBootstrapKeyFromStorage()).toBeNull();
++
++    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, '0x1234');
++    expect(loadBootstrapKeyFromStorage()).toBeNull();
++  });
++});
+diff --git a/frontend-respondents/src/bootstrap.factory.ts b/frontend-respondents/src/bootstrap.factory.ts
+new file mode 100644
+index 000000000..2a4f7f6a7
+--- /dev/null
++++ b/frontend-respondents/src/bootstrap.factory.ts
+@@ -0,0 +1,35 @@
++import { generatePrivateKey } from 'viem/accounts';
++import { IServices } from './services';
++import {
++  loadBootstrapKeyFromStorage,
++  saveBootstrapKeyToStorage,
++} from './state/storage.js';
++
++// Random bootstrap stealth leaf — identity establishment at the survey ENTRY gate
++// (Task 1b of RFC-deferred-identity-persistence).
++//
++// In the anchored-identity model a respondent with no anchor walks up with a card and
++// is given a RANDOM bootstrap stealth leaf `E` (RFC §5.2). It is created from a
++// CSPRNG private key (viem/accounts generatePrivateKey -> noble-secp256k1
++// randomPrivateKey -> webcrypto crypto.getRandomValues), persisted to device-local
++// storage immediately (RFC §7.1), and set as the smart-account signer. No anchor,
++// no OPRF, no PRF for this random bootstrap leaf — the human-wallet (WaaP/OPRF) flow
++// lives in humanWallet.factory.ts and is deferred to the post-survey persist step.
++//
++// Load-or-create: if a persisted key exists it is reused; otherwise one is generated
++// and persisted before being fed to the account signer.
++export const ensureBootstrapKey = async (
++  services: IServices,
++): Promise<`0x${string}`> => {
++  const key = loadBootstrapKeyFromStorage() ?? createAndPersistBootstrapKey();
++
++  await services.account.updateSignerWithKey(key);
++
++  return services.account.getSignerAddress();
++};
++
++export function createAndPersistBootstrapKey(): `0x${string}` {
++  const key = generatePrivateKey();
++  saveBootstrapKeyToStorage(key);
++  return key;
++}
+diff --git a/frontend-respondents/src/controllers/auth-ctrlr.test.ts b/frontend-respondents/src/controllers/auth-ctrlr.test.ts
+index 35051e572..578b552c1 100644
+--- a/frontend-respondents/src/controllers/auth-ctrlr.test.ts
++++ b/frontend-respondents/src/controllers/auth-ctrlr.test.ts
+@@ -4,6 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ // intercepted before resolution). We keep the Node environment and never pull
+ // jsdom: the small browser surface the controller touches (window/document/
+ // alert/localStorage) is stubbed below instead.
++//
++// Task 1 (deferred identity): the controller no longer calls the human-wallet
++// authenticate() — entry establishes the random bootstrap leaf E via the mocked
++// ensureBootstrapKey, then always registers the (pre-registration) leaf.
+ 
+ const h = vi.hoisted(() => ({
+   // Configurable per-test behaviour of the mocked Card.register().
+@@ -28,14 +32,14 @@ vi.mock('@s3ntiment/shared', () => ({
+ }));
+ vi.mock('@s3ntiment/shared/components', () => ({}));
+ vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
+-vi.mock('../auth.factory.js', () => ({ authenticate: vi.fn() }));
++vi.mock('../bootstrap.factory.js', () => ({ ensureBootstrapKey: vi.fn() }));
+ vi.mock('../onpageload.js', () => ({ removeSplash: vi.fn() }));
+ 
+ import { AuthController } from './auth-ctrlr.js';
+ // These resolve to the mocked factories above.
+ import { Card, parseCardURL, fetchSurvey } from '@s3ntiment/shared';
+ import { router } from '../router.js';
+-import { authenticate } from '../auth.factory.js';
++import { ensureBootstrapKey } from '../bootstrap.factory.js';
+ import { store } from '../state/store.js';
+ 
+ const SURVEY_ID = 'survey-abc';
+@@ -55,7 +59,7 @@ const CARD_DATA = {
+ };
+ 
+ function fakeServices(): any {
+-  return { account: { getAddress: vi.fn(() => '0x00000000000000000000000000000000000000aa') } };
++  return {};
+ }
+ 
+ function installBrowserGlobals() {
+@@ -83,11 +87,11 @@ beforeEach(() => {
+ 
+   (parseCardURL as any).mockResolvedValue(CARD_DATA);
+   (fetchSurvey as any).mockResolvedValue([IPFS_CID, POOL_ID, CREATED_AT]);
+-  (authenticate as any).mockResolvedValue(false);
++  (ensureBootstrapKey as any).mockResolvedValue('0x00000000000000000000000000000000000000aa');
+ });
+ 
+ describe('AuthController (root route "/")', () => {
+-  it('runs the full auth+registration flow: parse -> fetch -> store -> authenticate -> register -> navigate', async () => {
++  it('runs the deferred-identity entry flow: parse -> fetch -> store -> ensure bootstrap E -> register -> navigate', async () => {
+     const ctrl = new AuthController(fakeServices());
+     await ctrl.render();
+ 
+@@ -107,11 +111,11 @@ describe('AuthController (root route "/")', () => {
+       pool: POOL_ID,
+     });
+ 
+-    // authenticate invoked with (services, poolId)
+-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
++    // entry establishes the random bootstrap leaf (no human-wallet authenticate)
++    expect(ensureBootstrapKey).toHaveBeenCalledWith(expect.anything());
+ 
+-    // not (yet) a participant -> card.register (on-chain registerInPool, waits
+-    // for receipt) is called with (services, surveyStore, poolId)
++    // leaf E is pre-registration at entry, so card.register (on-chain registerInPool,
++    // waits for receipt) runs with (services, surveyStore, poolId)
+     const card: any = h.instances[0];
+     expect(card).toBeDefined();
+     expect(card.register).toHaveBeenCalledWith(
+@@ -126,18 +130,6 @@ describe('AuthController (root route "/")', () => {
+     expect((globalThis as any).alert).not.toHaveBeenCalled();
+   });
+ 
+-  it('skips card.register and navigates when the user is already a participant', async () => {
+-    (authenticate as any).mockResolvedValue(true);
+-
+-    const ctrl = new AuthController(fakeServices());
+-    await ctrl.render();
+-
+-    expect(router.navigate).toHaveBeenCalledWith('/surveys/' + SURVEY_ID);
+-    // already a participant -> no on-chain registration
+-    expect(h.instances.length).toBe(1); // Card still constructed
+-    expect(h.instances[0].register).not.toHaveBeenCalled();
+-  });
+-
+   it('alerts and does not navigate when the registration receipt is not success', async () => {
+     h.registerImpl.current = () =>
+       Promise.resolve({ receipt: { status: 'reverted' } });
+@@ -166,7 +158,7 @@ describe('AuthController (root route "/")', () => {
+     await ctrl.render();
+ 
+     expect(fetchSurvey).not.toHaveBeenCalled();
+-    expect(authenticate).not.toHaveBeenCalled();
++    expect(ensureBootstrapKey).not.toHaveBeenCalled();
+     expect(h.instances.length).toBe(0);
+     expect(router.navigate).not.toHaveBeenCalled();
+   });
+diff --git a/frontend-respondents/src/controllers/auth-ctrlr.ts b/frontend-respondents/src/controllers/auth-ctrlr.ts
+index 63e72b990..ca7d15f29 100644
+--- a/frontend-respondents/src/controllers/auth-ctrlr.ts
++++ b/frontend-respondents/src/controllers/auth-ctrlr.ts
+@@ -5,7 +5,7 @@ import { store } from '../state/store.js';
+ import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+ 
+ import { router } from '../router.js';
+-import { authenticate } from '../auth.factory.js';
++import { ensureBootstrapKey } from '../bootstrap.factory.js';
+ import { CardData, fetchSurvey } from '@s3ntiment/shared';
+ import { Card, parseCardURL } from '@s3ntiment/shared';
+ import { removeSplash } from '../onpageload.js';
+@@ -67,37 +67,27 @@ export class AuthController {
+                 pool: poolId
+             })
+ 
+-            const isParticipant = await authenticate(this.services, poolId);
++            // Deferred identity: at entry the random bootstrap leaf `E` is
++            // pre-registration, so establish E (load-or-create + persist) on the
++            // signer rather than running the human-wallet WaaP/OPRF authenticate().
++            await ensureBootstrapKey(this.services);
+ 
+-            console.log(`${this.services.account.getAddress()} : ${poolId} - ${isParticipant}`)
++            try {
++                const tx = await card.register(this.services, surveyStore, poolId);
+ 
+-            // if(isParticipant ) {  // && import.meta.env.VITE_PROD == 'true'
+-            //  //   alert("your mailadress was already used for this survey. Skip if you're just tesing")
+-            // }
+-
+-            if(!isParticipant) {
+-
+-                try {
+-                    const tx = await card.register(this.services, surveyStore, poolId);
+-
+-                    console.log(tx)
+-                
+-                    if (tx.receipt?.status === 'success') {
+-                        console.log("new card registered")
+-                        router.navigate('/surveys/' + cardData.surveyId);
+-
+-                    } else {
+-                        alert('❌ Card validation failed');
+-                    }
+-                } catch (error) {
++                console.log(tx)
++            
++                if (tx.receipt?.status === 'success') {
++                    console.log("new card registered")
++                    router.navigate('/surveys/' + cardData.surveyId);
+ 
++                } else {
+                     alert('❌ Card validation failed');
+                 }
+-            } 
++            } catch (error) {
+ 
+-            if(isParticipant) {
+-                router.navigate(`/surveys/${cardData.surveyId}`);
+-            } 
++                alert('❌ Card validation failed');
++            }
+         }   
+ 
+     }
+diff --git a/frontend-respondents/src/controllers/used-card-ctrlr.test.ts b/frontend-respondents/src/controllers/used-card-ctrlr.test.ts
+index eac5a2ac9..2d83ad11e 100644
+--- a/frontend-respondents/src/controllers/used-card-ctrlr.test.ts
++++ b/frontend-respondents/src/controllers/used-card-ctrlr.test.ts
+@@ -2,18 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ 
+ // ---- Mocks (hoisted so the controller's own imports are intercepted before
+ // resolution). The shared components barrel is neutralised (it registers
+-// custom elements at top level), the router singleton is faked, and the heavy
+-// `authenticate` factory is replaced per-test. `store` stays REAL (as in the
++// custom elements at top level), the router singleton is faked, and the
++// deferred bootstrap factory is replaced per-test. `store` stays REAL (as in the
+ // auth-ctrlr / survey-ctrlr tests) since the controller simply binds a UI view
+ // to it; `viem/chains` and the JSON deployment import load natively in node.
+ 
+ vi.mock('@s3ntiment/shared/components', () => ({}));
+ vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
+-vi.mock('../auth.factory.js', () => ({ authenticate: vi.fn() }));
++vi.mock('../bootstrap.factory.js', () => ({ ensureBootstrapKey: vi.fn() }));
+ 
+ import { UsedCardController } from './used-card-ctrlr.js';
+ import { router } from '../router.js';
+-import { authenticate } from '../auth.factory.js';
++import { ensureBootstrapKey } from '../bootstrap.factory.js';
+ 
+ const SURVEY_ID = 'survey-abc';
+ 
+@@ -38,6 +38,7 @@ function installBrowserGlobals() {
+ beforeEach(() => {
+   vi.clearAllMocks();
+   installBrowserGlobals();
++  (ensureBootstrapKey as any).mockResolvedValue('0x00000000000000000000000000000000000000aa');
+ });
+ 
+ afterEach(() => {
+@@ -56,49 +57,31 @@ describe('UsedCardController — "Sign in" flow', () => {
+     expect((ctrl as any).reactiveViews.length).toBe(1);
+   });
+ 
+-  it('navigates to the survey route when authenticate() succeeds', async () => {
+-    (authenticate as any).mockResolvedValue(true);
+-
++  it('re-establishes the bootstrap identity and navigates to the survey when clicked', async () => {
+     const ctrl = new UsedCardController({} as any, SURVEY_ID);
+     await ctrl.render();
+ 
+     const click = (globalThis as any).__usedCardGetClick('click');
+     await click();
+ 
+-    expect(authenticate).toHaveBeenCalledTimes(1);
+-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), SURVEY_ID);
++    // "Sign in" is now deferred identity: ensure the on-device bootstrap leaf E
++    // (load-or-create + persist) and proceed — no WaaP/OPRF authenticate().
++    expect(ensureBootstrapKey).toHaveBeenCalledTimes(1);
++    expect(ensureBootstrapKey).toHaveBeenCalledWith(expect.anything());
+     expect(router.navigate).toHaveBeenCalledTimes(1);
+     expect(router.navigate).toHaveBeenCalledWith(`/surveys/${SURVEY_ID}`);
+     expect((globalThis as any).alert).not.toHaveBeenCalled();
+   });
+ 
+-  it('alerts and does not navigate when authenticate() returns false', async () => {
+-    (authenticate as any).mockResolvedValue(false);
+-
+-    const ctrl = new UsedCardController({} as any, SURVEY_ID);
+-    await ctrl.render();
+-
+-    const click = (globalThis as any).__usedCardGetClick('click');
+-    await click();
+-
+-    expect((globalThis as any).alert).toHaveBeenCalledWith(
+-      'You did not register for this survey'
+-    );
+-    expect(router.navigate).not.toHaveBeenCalled();
+-  });
+-
+-  it('propagates a reject from authenticate() without navigating or alerting', async () => {
+-    // The controller does not try/catch authenticate(), so a rejected promise
+-    // propagates rather than falling through to the alert branch — asserting
+-    // the honest source behaviour.
+-    (authenticate as any).mockRejectedValue(new Error('auth blew up'));
++  it('propagates a reject from ensureBootstrapKey without navigating or alerting', async () => {
++    (ensureBootstrapKey as any).mockRejectedValue(new Error('bootstrap blew up'));
+ 
+     const ctrl = new UsedCardController({} as any, SURVEY_ID);
+     await ctrl.render();
+ 
+     const click = (globalThis as any).__usedCardGetClick('click');
+ 
+-    await expect(click()).rejects.toThrow('auth blew up');
++    await expect(click()).rejects.toThrow('bootstrap blew up');
+     expect(router.navigate).not.toHaveBeenCalled();
+     expect((globalThis as any).alert).not.toHaveBeenCalled();
+   });
+diff --git a/frontend-respondents/src/controllers/used-card-ctrlr.ts b/frontend-respondents/src/controllers/used-card-ctrlr.ts
+index fd48444c7..65663c674 100644
+--- a/frontend-respondents/src/controllers/used-card-ctrlr.ts
++++ b/frontend-respondents/src/controllers/used-card-ctrlr.ts
+@@ -5,8 +5,7 @@ import { store } from '../state/store.js';
+ import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+ 
+ import { router } from '../router.js';
+-import { base } from 'viem/chains';
+-import { authenticate } from '../auth.factory.js';
++import { ensureBootstrapKey } from '../bootstrap.factory.js';
+ 
+ 
+ export class UsedCardController {
+@@ -58,12 +57,11 @@ export class UsedCardController {
+ 
+         btn?.addEventListener("click", async () => {
+            
+-            const isParticipant = await authenticate(this.services, this.surveyId)
+-            if (isParticipant) {
+-                router.navigate(`/surveys/${this.surveyId}`)
+-            } else {
+-                alert("You did not register for this survey")
+-            }
++            // Deferred identity: the WaaP email/phone re-login is deferred to the
++            // post-survey persist step. "Sign in" here re-establishes the on-device
++            // random bootstrap leaf `E` (load-or-create + persist) and proceeds.
++            await ensureBootstrapKey(this.services);
++            router.navigate(`/surveys/${this.surveyId}`)
+         });
+     }
+ 
+diff --git a/frontend-respondents/src/auth.factory.test.ts b/frontend-respondents/src/humanWallet.factory.test.ts
+similarity index 93%
+rename from frontend-respondents/src/auth.factory.test.ts
+rename to frontend-respondents/src/humanWallet.factory.test.ts
+index bc15b7a14..9b2dbdb00 100644
+--- a/frontend-respondents/src/auth.factory.test.ts
++++ b/frontend-respondents/src/humanWallet.factory.test.ts
+@@ -1,14 +1,16 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ 
+-// auth.factory.ts imports `fetchSurvey` from the shared package root source.
+-// The functions under test (authenticate / hasParticipatingAccount) never
+-// call it, so we stub the whole shared source index to keep this a pure,
+-// node-env unit test (no Lit/Nillion/d3/browser globals dragged in).
++// humanWallet.factory.ts imports `fetchSurvey` from the shared package root source.
++// The functions under test (authenticate / hasParticipatingAccount) never call it,
++// so we stub the whole shared source index to keep this a pure, node-env unit test
++// (no Lit/Nillion/d3/browser globals dragged in). This is the extracted human-wallet
++// flow (Task 1a) retained for the LATER post-survey persist route — it is NOT called
++// at the survey entry gate anymore.
+ vi.mock('../../shared/src/shared', () => ({
+   fetchSurvey: vi.fn(),
+ }));
+ 
+-import { authenticate, hasParticipatingAccount } from './auth.factory.js';
++import { authenticate, hasParticipatingAccount } from './humanWallet.factory.js';
+ import type { IServices } from './services.js';
+ // Committed deployment JSON — resolved via the s3ntiment-contracts workspace
+ // exports map (./deployments/*) so tests read the real address/abi.
+diff --git a/frontend-respondents/src/auth.factory.ts b/frontend-respondents/src/humanWallet.factory.ts
+similarity index 62%
+rename from frontend-respondents/src/auth.factory.ts
+rename to frontend-respondents/src/humanWallet.factory.ts
+index 14786c607..c31a656dd 100644
+--- a/frontend-respondents/src/auth.factory.ts
++++ b/frontend-respondents/src/humanWallet.factory.ts
+@@ -3,6 +3,17 @@ import { IServices } from "./services"
+ import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
+ import { fetchSurvey } from "../../shared/src/shared";
+ 
++// Human-wallet identity flow — EXTRACTED (Task 1a of RFC-deferred-identity-persistence).
++//
++// This is the full "human wallet" flow: WaaP login -> signMessage -> OPRF blind-sign
++// derive -> swap the smart-account signer via updateSignerWithKey. It is the durable,
++// anchor-stealth pairing for the LATER post-survey persist route — NOT called at the
++// survey entry gate. Entry now bootstraps a random stealth leaf instead
++// (see bootstrap.factory.ts ensureBootstrapKey).
++//
++// The persist flow (later task) re-establishes a durable anchor identity from this
++// factory and rotates records E -> S. It is deliberately NOT invoked at entry.
++
+ export const authenticate = async (services: IServices, poolId: string) : Promise<boolean>=> {
+          
+     await services.waap.login(base);
+@@ -24,4 +35,4 @@ export const hasParticipatingAccount = async (services: IServices, poolId: strin
+         [poolId, services.account.getSignerAddress()]
+     );
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/frontend-respondents/src/router-entry-gates.test.ts b/frontend-respondents/src/router-entry-gates.test.ts
+index e0d00364f..cc3fd035f 100644
+--- a/frontend-respondents/src/router-entry-gates.test.ts
++++ b/frontend-respondents/src/router-entry-gates.test.ts
+@@ -1,10 +1,12 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ 
+ // ---- The gate helpers are imported AFTER these mocks are hoisted, so the
+-// helper module resolves against the mocked Card / fetchSurvey / auth fns.
++// helper module resolves against the mocked Card / fetchSurvey / bootstrap fns.
+ // `Card` is mocked so we control `isUsed` per test (mirrors auth-ctrlr.test's
+ // instance-capturing mock); `store` is the REAL store (like survey-ctrlr.test
+-// uses) so we can assert the gate populates survey data.
++// uses) so we can assert the gate populates survey data. The survey gate no
++// longer authenticates — it ensures the random bootstrap leaf `E` (deferred
++// identity, Task 1) via the mocked ensureBootstrapKey.
+ 
+ const h = vi.hoisted(() => ({
+   isUsedImpl: {
+@@ -35,9 +37,8 @@ vi.mock('@s3ntiment/shared/browser', () => ({
+   fetchSurvey: vi.fn((...args: any[]) => h.fetchImpl.current(...args)),
+ }));
+ 
+-vi.mock('./auth.factory.js', () => ({
+-  hasParticipatingAccount: vi.fn(),
+-  authenticate: vi.fn(),
++vi.mock('./bootstrap.factory.js', () => ({
++  ensureBootstrapKey: vi.fn(),
+ }));
+ 
+ import {
+@@ -45,7 +46,7 @@ import {
+   resolveSurveyGate,
+ } from './router.gates.js';
+ import { Card } from '../../shared/src/shared/invites/card.factory.js';
+-import { hasParticipatingAccount, authenticate } from './auth.factory.js';
++import { ensureBootstrapKey } from './bootstrap.factory.js';
+ import { store } from './state/store.js';
+ 
+ const SURVEY_ID = 'survey-abc';
+@@ -69,6 +70,7 @@ beforeEach(() => {
+   h.instances.length = 0;
+   h.isUsedImpl.current = async () => false;
+   h.fetchImpl.current = async () => ['ipfs-cid-1', POOL_ID, '2026-08-28'];
++  (ensureBootstrapKey as any).mockResolvedValue('0x00000000000000000000000000000000000000be');
+   store.clear();
+ });
+ 
+@@ -109,27 +111,20 @@ describe('resolveRootGate (root "/" entry gate)', () => {
+   });
+ });
+ 
+-describe('resolveSurveyGate (/surveys/:surveyId entry gate)', () => {
+-  function mockParticipation(participant: boolean, authResult: boolean) {
+-    (hasParticipatingAccount as any).mockResolvedValue(participant);
+-    (authenticate as any).mockResolvedValue(authResult);
+-  }
+-
+-  it('missing surveyId -> navigate /surveys (no fetch, no participation checks)', async () => {
+-    mockParticipation(true, true);
++describe('resolveSurveyGate (/surveys/:surveyId entry gate — deferred bootstrap identity)', () => {
++  it('missing surveyId -> navigate /surveys (no fetch, no bootstrap)', async () => {
+     const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, '');
+ 
+     expect(decision).toEqual({ navigate: '/surveys' });
+-    expect(hasParticipatingAccount).not.toHaveBeenCalled();
+-    expect(authenticate).not.toHaveBeenCalled();
++    expect(ensureBootstrapKey).not.toHaveBeenCalled();
+   });
+ 
+-  it('pool member -> proceed, and fetchSurvey populates the store', async () => {
+-    mockParticipation(true, true);
++  it('proceeds after ensuring the bootstrap leaf, and fetchSurvey populates the store', async () => {
+     const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
+ 
+     expect(decision).toEqual({ proceed: true });
+-    expect(authenticate).not.toHaveBeenCalled();
++    // deferred identity at entry = ensure the random bootstrap leaf E exists + persisted
++    expect(ensureBootstrapKey).toHaveBeenCalledTimes(1);
+ 
+     // fetchSurvey populates the store via setSurveyData + setActiveSurvey
+     expect(store.getSurveyData(SURVEY_ID)).toMatchObject({
+@@ -140,24 +135,16 @@ describe('resolveSurveyGate (/surveys/:surveyId entry gate)', () => {
+     expect(store.activeSurvey).toMatchObject({ id: SURVEY_ID });
+   });
+ 
+-  it('non-member who authenticates successfully -> proceed', async () => {
+-    mockParticipation(false, true);
++  it('does NOT gate on on-chain pool membership (E is pre-registration at entry)', async () => {
++    // The gate never consults isPoolMember/authenticate — the random leaf is
++    // pre-registration, so entry is ensured bootstrap E, not a membership read.
+     const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
+ 
+     expect(decision).toEqual({ proceed: true });
+-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
+-  });
+-
+-  it('non-member whose authentication fails -> navigate /invalid-card', async () => {
+-    mockParticipation(false, false);
+-    const decision = await resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID);
+-
+-    expect(decision).toEqual({ navigate: '/invalid-card' });
+-    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
++    expect(ensureBootstrapKey).toHaveBeenCalledTimes(1);
+   });
+ 
+   it('propagates a rejection from fetchSurvey', async () => {
+-    mockParticipation(true, true);
+     h.fetchImpl.current = async () => {
+       throw new Error('fetch exploded');
+     };
+@@ -165,4 +152,11 @@ describe('resolveSurveyGate (/surveys/:surveyId entry gate)', () => {
+       resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID),
+     ).rejects.toThrow('fetch exploded');
+   });
++
++  it('propagates a rejection from ensureBootstrapKey', async () => {
++    (ensureBootstrapKey as any).mockRejectedValue(new Error('bootstrap exploded'));
++    await expect(
++      resolveSurveyGate(fakeServices(), SURVEY_STORE, SURVEY_ID),
++    ).rejects.toThrow('bootstrap exploded');
++  });
+ });
+diff --git a/frontend-respondents/src/router.gates.ts b/frontend-respondents/src/router.gates.ts
+index 32eedc47a..172ed0854 100644
+--- a/frontend-respondents/src/router.gates.ts
++++ b/frontend-respondents/src/router.gates.ts
+@@ -8,12 +8,12 @@
+ //
+ // The extraction preserves the exact observable router behavior (root: card
+ // unparseable -> invalid-card; used -> used-card/:surveyId; else proceed;
+-// /surveys: fetchSurvey -> participation/authenticate -> proceed | invalid-card),
+-// while making the gate logic independently testable.
++// /surveys: fetchSurvey -> ensure bootstrap leaf E -> proceed), while making the
++// gate logic independently testable.
+ 
+ import { Card, type CardData } from '../../shared/src/shared/invites/card.factory.js';
+ import { fetchSurvey } from '@s3ntiment/shared/browser';
+-import { authenticate, hasParticipatingAccount } from './auth.factory.js';
++import { ensureBootstrapKey } from './bootstrap.factory.js';
+ import { store } from './state/store.js';
+ 
+ export type RootGateResult =
+@@ -61,8 +61,11 @@ export async function resolveRootGate(
+ }
+ 
+ // `/surveys/:surveyId` entry gate. Resolves the surveyId (navigating to
+-// '/surveys' when absent), fetches the survey and populates the store, then
+-// grants entry only to participating accounts (authenticating on demand).
++// '/surveys' when absent), fetches the survey and populates the store, then pushes
++// deferred identity: at entry the random bootstrap leaf `E` is PRE-registration, so
++// the gate becomes "ensure E exists + persisted" (RFC §5.2 / §8), not an on-chain
++// `isPoolMember` membership check. Membership is established later via
++// card.register / the submit flow.
+ export async function resolveSurveyGate(
+   services: any,
+   surveyStore: any,
+@@ -80,13 +83,8 @@ export async function resolveSurveyGate(
+   });
+   store.setActiveSurvey(surveyId);
+ 
+-  let isParticipant = await hasParticipatingAccount(services, poolId);
+-  if (!isParticipant) {
+-    isParticipant = await authenticate(services, poolId);
+-  }
++  // Random bootstrap stealth leaf: load-or-create + persist, set on the signer.
++  await ensureBootstrapKey(services);
+ 
+-  if (isParticipant) {
+-    return { proceed: true };
+-  }
+-  return { navigate: '/invalid-card' };
++  return { proceed: true };
+ }
+diff --git a/frontend-respondents/src/services.ts b/frontend-respondents/src/services.ts
+index facec7126..341cfc1e4 100644
+--- a/frontend-respondents/src/services.ts
++++ b/frontend-respondents/src/services.ts
+@@ -67,10 +67,12 @@ export class ServiceContainer implements IServices {
+     this.ipfs = new IPFSMethods(import.meta.env.VITE_KUBO_ENDPOINT, import.meta.env.VITE_PINATA_JWT, import.meta.env.VITE_PINATA_GATEWAY)
+     this.nillDB = new NillDBUserService(import.meta.env.VITE_NIL_BUILDER_DID,  import.meta.env.VITE_NILDB_NODES);
+     this.oprf = new OPRFService(import.meta.env.VITE_HUMAN_NETWORK_SIGNER_URL);
+-    
+-    await this.waap.createWallet(base);
+-    await this.oprf.init()
+ 
++    // Deferred identity (RFC-deferred-identity-persistence): the eager WaaP
++    // createWallet (pops the SDK) and OPRF wasm init were the entry-funnel cost
++    // Task 1 removes from the random-bootstrap path. They are no longer called at
++    // startup; the extracted humanWallet.factory (WaaP login + OPRF derive) will
++    // re-establish them when the post-survey persist route runs.
+     this.initialized = true;
+ 
+     return;
+diff --git a/frontend-respondents/src/state/storage.ts b/frontend-respondents/src/state/storage.ts
+index 450249333..4114ea1ba 100644
+--- a/frontend-respondents/src/state/storage.ts
++++ b/frontend-respondents/src/state/storage.ts
+@@ -6,6 +6,33 @@ import { SurveyMap } from "./surveys.store";
+ const SURVEYS_STORAGE_KEY = 'surveys';
+ const POOLS_STORAGE_KEY = 'pools';
+ 
++// Bootstrap stealth-leaf private key (RFC-deferred-identity-persistence).
++// The random bootstrap leaf `E` is written to device-local storage IMMEDIATELY at
++// generation (RFC §7.1) so it survives a tab close — otherwise the burned nullifier
++// is orphaned. This is the transient bootstrap credential, NOT a durable anchor.
++export const BOOTSTRAP_STORAGE_KEY = 'bootstrapE';
++
++export function loadBootstrapKeyFromStorage(): `0x${string}` | null {
++  try {
++    const stored = localStorage.getItem(BOOTSTRAP_STORAGE_KEY);
++    // Persisted as raw 0x-prefixed 32-byte (64 hex char) private key.
++    if (stored && /^0x[0-9a-fA-F]{64}$/.test(stored)) {
++      return stored as `0x${string}`;
++    }
++  } catch (e) {
++    console.warn('Failed to load bootstrap key from localStorage:', e);
++  }
++  return null;
++}
++
++export function saveBootstrapKeyToStorage(key: `0x${string}`): void {
++  try {
++    localStorage.setItem(BOOTSTRAP_STORAGE_KEY, key);
++  } catch (e) {
++    console.warn('Failed to save bootstrap key to localStorage:', e);
++  }
++}
++
+ export interface PoolsMap {
+   [id: string]: Pool;
+ }

@@ -1,0 +1,1152 @@
+diff --git a/brain/audits/ht-respondent-auth-tests-2026-08-28.md b/brain/audits/ht-respondent-auth-tests-2026-08-28.md
+new file mode 100644
+index 000000000..c9e1ae666
+--- /dev/null
++++ b/brain/audits/ht-respondent-auth-tests-2026-08-28.md
+@@ -0,0 +1,108 @@
++# HT Respondent Frontend — Auth Tests (Tranche 1)
++
++**Date:** 2026-08-28
++**Branch/PR:** `deepseek/ht-respondent-auth-tests`
++**Scope:** AUTH ONLY — explicitly EXCLUDES onboarding screens (`invalid-card-ctrlr.ts`, `completed-ctrlr.ts`, `about.ctrlr.ts`, and the `.onboarding-message` markup in `auth-ctrlr.ts`/`used-card-ctrlr.ts`). The pure auth logic (`src/auth.factory.ts`) and the root-route `AuthController` are fully covered.
++**Related audit:** `brain/audits/ht-respondent-auth-exploration-2026-08-28.md`
++
++---
++
++## 1. What was added
++
++### Test runner (vitest)
++- `frontend-respondents/package.json`
++  - Added `vitest` (^4.1.11) to `devDependencies` (Vite 7 + ESM + TS compatible).
++  - Replaced the `"test"` stub (`echo "Error: no test specified" && exit 1`) with `"test": "vitest run"`.
++- `frontend-respondents/vitest.config.ts` — Node environment (logic tests, **no jsdom**), includes `src/**/*.test.ts`, mirrors the vite React neutralization alias via `src/empty-module.ts`, wires `test/setup.ts`.
++- `frontend-respondents/test/setup.ts` — minimal Node-side browser-global stubs (`localStorage`, `window`, `document`, `alert`). Installed before the module graph loads so import-time global reads (e.g. `src/state/store.ts` constructing `UserStore`, which reads `localStorage`) work without jsdom. Tests override `window.location.href` / `alert` per case.
++- `pnpm-lock.yaml` — updated for the new vitest dependency.
++
++### Test files (the deliverable)
++| File | Coverage |
++|---|---|
++| `src/auth.factory.test.ts` | Unit tests for `authenticate()` + `hasParticipatingAccount()` via a hand-built fake `IServices` |
++| `src/controllers/auth-ctrlr.test.ts` | Controller tests for the root-route auth + registration flow |
++| `src/card-signature.seam.test.ts` | Frontend-integration test of the shared card-encoding seam (relative source import) |
++| `src/test/setup.ts` | shared global stubs (lives under `test/`) |
++
++---
++
++## 2. auth.factory unit tests (`src/auth.factory.test.ts`)
++
++A fake `IServices` (`{ viem, waap, account, ipfs, lit, nillDB, oprf }`) is constructed per test. It never touches the `ServiceContainer` singleton / `getServices()`, never reads `window.waap`, and never makes network calls. Mocked at minimum: `waap.login`, `waap.signMessage`, `oprf.getSecp256k1`, `account.updateSignerWithKey`, `account.getSignerAddress`, `viem.read`. The shared package source import inside `auth.factory.ts` (`../../shared/src/shared`) is stubbed via `vi.mock` because the functions under test never call `fetchSurvey` — keeping the unit test free of Lit/Nillion/d3.
++
++Covered cases (9 tests):
++- `authenticate` happy path walks `login → signMessage → getSecp256k1 → updateSignerWithKey → hasParticipatingAccount` and returns `true` when already a participant.
++- `authenticate` returns `false` when the derived participant is not an on-chain pool member.
++- `hasParticipatingAccount` returns `false` (with no `viem.read` call) when `getSignerAddress() === '0x'`.
++- `hasParticipatingAccount` reads `isPoolMember` via `viem.read` with `[poolId, signerAddress]` and the real committed address/abi from `s3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json` (resolved via the workspace exports map).
++- Error propagation: `waap.login` / `waap.signMessage` / `oprf.getSecp256k1` / `account.updateSignerWithKey` each rejecting propagates and short-circuits the flow.
++
++---
++
++## 3. AuthController tests (`src/controllers/auth-ctrlr.test.ts`)
++
++`AuthController` (bound to the root route `/`) is exercised in the Node environment. The router (Navigo), `Card`/`parseCardURL`/`fetchSurvey` (`@s3ntiment/shared`), `@s3ntiment/shared/components`, `authenticate`, `removeSplash` are mocked; `window`/`document`/`alert`/`localStorage` are stubbed — **no jsdom**.
++
++Covered cases (5 tests):
++- **Happy path**: `parseCardURL(url)` → `fetchSurvey(services, surveyStore, surveyId)` → `store.setSurveyData(surveyId, { id, pool })` → `authenticate(services, poolId)` → not a participant → `card.register(services, surveyStore, poolId)` (on-chain `registerInPool`, awaiting the receipt) → `router.navigate('/surveys/:surveyId')`.
++- **Already-participant shortcut**: `authenticate` returns `true` → navigates straight to `/surveys/:surveyId`, and `card.register` is **not** called.
++- **Receipt not success** → `alert`, no navigation.
++- **`card.register` rejects** → `alert`, no navigation.
++- **No card on URL** (`parseCardURL` → `null`) → no fetch / authenticate / register / navigate.
++
++---
++
++## 4. Shared-encoding seam usage (user priority, item 4)
++
++`src/card-signature.seam.test.ts` imports the shared card-encoding module by **direct relative source path**, mirroring the precedent already in `src/auth.factory.ts` (`import { fetchSurvey } from "../../shared/src/shared"`):
++
++```ts
++import { cardMessageHash, ethSignedMessageHash, signCardMessage } from '../../shared/src/shared/invites/encoding.js';
++import { parseCardURL } from '../../shared/src/shared/invites/card.factory.js';
++```
++
++This resolves to the shared `.ts` source — the test depends on **source, not the unbuilt `shared/dist`**. It pins the same seam the contract tests already pin (`contracts/test/encoding.seam.test.ts`) and that the auth flow relies on. Covered cases (5 tests):
++- `cardMessageHash` matches `keccak256(abi.encodePacked(nullifier, "|", batchId))`.
++- `ethSignedMessageHash` wraps the digest in the EIP-191 `\x19Ethereum Signed Message:\n32` envelope.
++- **Round-trip**: `signCardMessage(account, nullifier, batchId)` → `recoverMessageAddress({ message: { raw: cardMessageHash(...) }, signature })` recovers the `batchId`. This is the card-signature → owner-recovery the on-chain `registerInPool` and shared `parseCardURL` rely on.
++- Real `parseCardURL` (from `card.factory.ts` source) recovers `surveyOwner == batchId` from a signed card URL — the auth flow entry point.
++- Missing-param card URL returns `null`.
++
++---
++
++## 5. Onboarding exclusions honored
++
++- No tests written for `invalid-card-ctrlr.ts`, `completed-ctrlr.ts`, `about.ctrlr.ts`, or the `.onboarding-message` markup in `auth-ctrlr.ts`/`used-card-ctrlr.ts`.
++- The `authenticate()` / `hasParticipatingAccount()` calls those screens make are covered via `src/auth.factory.ts`.
++
++---
++
++## 6. Green gates (run by the author)
++
++```
++$ pnpm --filter frontend-respondents test
++Test Files  3 passed (3)
++     Tests  19 passed (19)
++
++$ pnpm --filter frontend-respondents build
++✓ 6979 modules transformed.
++✓ built in 39.74s
++```
++
++- **Collected:** 19 tests across 3 files
++- **Passed:** 19/19
++- **Build:** green
++
++Per-file counts:
++- `src/auth.factory.test.ts` — 9 passed
++- `src/controllers/auth-ctrlr.test.ts` — 5 passed
++- `src/card-signature.seam.test.ts` — 5 passed
++
++Installation used `pnpm install` (workspace links `@s3ntiment/shared`, `s3ntiment-contracts` resolve) and `pnpm build:shared` (tsc) — shared `dist` is produced but **gitignored**; the tests use the relative source seam so they do not depend on it at runtime.
++
++---
++
++## 7. Notes
++- `shared/dist/` and `frontend-respondents/dist/` are gitignored and are not part of the PR.
++- The committed deployment JSON `s3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json` resolves via the workspace exports map (`./deployments/*`) with `with { type: 'json' }`, exercised in both the auth.factory and controller tests.
+diff --git a/frontend-respondents/package.json b/frontend-respondents/package.json
+index 341378815..c94c9efb4 100644
+--- a/frontend-respondents/package.json
++++ b/frontend-respondents/package.json
+@@ -5,7 +5,7 @@
+   "main": "index.js",
+   "type": "module",
+   "scripts": {
+-    "test": "echo \"Error: no test specified\" && exit 1",
++    "test": "vitest run",
+     "dev": "vite",
+     "build": "NODE_OPTIONS='--max-old-space-size=16384' vite build",
+     "preview": "vite preview"
+@@ -19,7 +19,8 @@
+     "vite": "^7.3.1",
+     "vite-plugin-static-copy": "^3.2.0",
+     "vite-plugin-top-level-await": "^1.6.0",
+-    "vite-plugin-wasm": "^3.5.0"
++    "vite-plugin-wasm": "^3.5.0",
++    "vitest": "^4.1.11"
+   },
+   "dependencies": {
+     "@holonym-foundation/mishtiwasm": "^0.3.2",
+diff --git a/frontend-respondents/src/auth.factory.test.ts b/frontend-respondents/src/auth.factory.test.ts
+new file mode 100644
+index 000000000..bc15b7a14
+--- /dev/null
++++ b/frontend-respondents/src/auth.factory.test.ts
+@@ -0,0 +1,204 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// auth.factory.ts imports `fetchSurvey` from the shared package root source.
++// The functions under test (authenticate / hasParticipatingAccount) never
++// call it, so we stub the whole shared source index to keep this a pure,
++// node-env unit test (no Lit/Nillion/d3/browser globals dragged in).
++vi.mock('../../shared/src/shared', () => ({
++  fetchSurvey: vi.fn(),
++}));
++
++import { authenticate, hasParticipatingAccount } from './auth.factory.js';
++import type { IServices } from './services.js';
++// Committed deployment JSON — resolved via the s3ntiment-contracts workspace
++// exports map (./deployments/*) so tests read the real address/abi.
++import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' };
++
++const POOL_ID = '0x0000000000000000000000000000000000000001';
++const SIGNER = '0x00000000000000000000000000000000000000ab';
++const SIGNED_INPUT = '0x1234';
++const DERIVED_KEY = '0x00000000000000000000000000000000000000cd';
++
++type DeepPartial<T> = { [K in keyof T]?: unknown };
++
++function createFakeServices(overrides: DeepPartial<IServices> = {}): IServices {
++  return {
++    viem: { read: vi.fn() },
++    waap: { login: vi.fn(), signMessage: vi.fn() },
++    account: { updateSignerWithKey: vi.fn(), getSignerAddress: vi.fn() },
++    ipfs: {},
++    lit: {},
++    nillDB: {},
++    oprf: { getSecp256k1: vi.fn() },
++    ...overrides,
++  } as unknown as IServices;
++}
++
++beforeEach(() => {
++  vi.resetAllMocks();
++});
++
++describe('hasParticipatingAccount', () => {
++  it('returns false without any on-chain read when getSignerAddress() === "0x"', async () => {
++    const services = createFakeServices({
++      account: { getSignerAddress: vi.fn(() => '0x') },
++    });
++
++    const result = await hasParticipatingAccount(services, POOL_ID);
++
++    expect(result).toBe(false);
++    expect(services.viem.read).not.toHaveBeenCalled();
++  });
++
++  it('reads isPoolMember via viem.read with [poolId, signerAddress]', async () => {
++    const read = vi.fn().mockResolvedValue(true);
++    const services = createFakeServices({
++      account: { getSignerAddress: vi.fn(() => SIGNER) },
++      viem: { read },
++    });
++
++    const result = await hasParticipatingAccount(services, POOL_ID);
++
++    expect(result).toBe(true);
++    expect(services.account.getSignerAddress).toHaveBeenCalledTimes(2);
++    expect(read).toHaveBeenCalledWith(
++      surveyStore.address,
++      surveyStore.abi,
++      'isPoolMember',
++      [POOL_ID, SIGNER],
++    );
++  });
++
++  it('surfaces the resolved isPoolMember value (false when not a member)', async () => {
++    const read = vi.fn().mockResolvedValue(false);
++    const services = createFakeServices({
++      account: { getSignerAddress: vi.fn(() => SIGNER) },
++      viem: { read },
++    });
++
++    const result = await hasParticipatingAccount(services, POOL_ID);
++
++    expect(result).toBe(false);
++    expect(read).toHaveBeenCalledWith(
++      surveyStore.address,
++      surveyStore.abi,
++      'isPoolMember',
++      [POOL_ID, SIGNER],
++    );
++  });
++});
++
++describe('authenticate', () => {
++  it('walks the full login flow and returns true when already a participant', async () => {
++    const login = vi.fn().mockResolvedValue(undefined);
++    const signMessage = vi.fn().mockResolvedValue(SIGNED_INPUT);
++    const getSecp256k1 = vi.fn().mockResolvedValue(DERIVED_KEY);
++    const updateSignerWithKey = vi.fn().mockResolvedValue(SIGNER);
++    const read = vi.fn().mockResolvedValue(true);
++
++    const services = createFakeServices({
++      waap: { login, signMessage },
++      oprf: { getSecp256k1 },
++      account: {
++        updateSignerWithKey,
++        getSignerAddress: vi.fn(() => SIGNER),
++      },
++      viem: { read },
++    });
++
++    const result = await authenticate(services, POOL_ID);
++
++    expect(result).toBe(true);
++    expect(login).toHaveBeenCalledTimes(1);
++    expect(signMessage).toHaveBeenCalledWith(
++      `Sign in with your unlinkable account for respondent pool ${POOL_ID}`,
++    );
++    expect(getSecp256k1).toHaveBeenCalledWith(SIGNED_INPUT);
++    expect(updateSignerWithKey).toHaveBeenCalledWith(DERIVED_KEY);
++    // hasParticipatingAccount then consults the on-chain oracle
++    expect(read).toHaveBeenCalledWith(
++      surveyStore.address,
++      surveyStore.abi,
++      'isPoolMember',
++      [POOL_ID, SIGNER],
++    );
++  });
++
++  it('returns false when the derived participant is not a pool member', async () => {
++    const services = createFakeServices({
++      waap: {
++        login: vi.fn().mockResolvedValue(undefined),
++        signMessage: vi.fn().mockResolvedValue(SIGNED_INPUT),
++      },
++      oprf: { getSecp256k1: vi.fn().mockResolvedValue(DERIVED_KEY) },
++      account: {
++        updateSignerWithKey: vi.fn().mockResolvedValue(SIGNER),
++        getSignerAddress: vi.fn(() => SIGNER),
++      },
++      viem: { read: vi.fn().mockResolvedValue(false) },
++    });
++
++    const result = await authenticate(services, POOL_ID);
++
++    expect(result).toBe(false);
++  });
++
++  it('propagates rejection from waap.login and stops the flow', async () => {
++    const login = vi.fn().mockRejectedValue(new Error('login failed'));
++    const signMessage = vi.fn();
++    const services = createFakeServices({ waap: { login, signMessage } });
++
++    await expect(authenticate(services, POOL_ID)).rejects.toThrow('login failed');
++    expect(signMessage).not.toHaveBeenCalled();
++  });
++
++  it('propagates rejection from waap.signMessage', async () => {
++    const login = vi.fn().mockResolvedValue(undefined);
++    const signMessage = vi.fn().mockRejectedValue(new Error('sign failed'));
++    const getSecp256k1 = vi.fn();
++    const services = createFakeServices({
++      waap: { login, signMessage },
++      oprf: { getSecp256k1 },
++    });
++
++    await expect(authenticate(services, POOL_ID)).rejects.toThrow('sign failed');
++    expect(login).toHaveBeenCalledTimes(1);
++    expect(getSecp256k1).not.toHaveBeenCalled();
++  });
++
++  it('propagates rejection from oprf.getSecp256k1', async () => {
++    const services = createFakeServices({
++      waap: {
++        login: vi.fn().mockResolvedValue(undefined),
++        signMessage: vi.fn().mockResolvedValue(SIGNED_INPUT),
++      },
++      oprf: { getSecp256k1: vi.fn().mockRejectedValue(new Error('oprf failed')) },
++      account: { updateSignerWithKey: vi.fn() },
++    });
++
++    await expect(authenticate(services, POOL_ID)).rejects.toThrow('oprf failed');
++    expect(services.account.updateSignerWithKey).not.toHaveBeenCalled();
++  });
++
++  it('propagates rejection from account.updateSignerWithKey', async () => {
++    const updateSignerWithKey = vi
++      .fn()
++      .mockRejectedValue(new Error('signer failed'));
++    const services = createFakeServices({
++      waap: {
++        login: vi.fn().mockResolvedValue(undefined),
++        signMessage: vi.fn().mockResolvedValue(SIGNED_INPUT),
++      },
++      oprf: { getSecp256k1: vi.fn().mockResolvedValue(DERIVED_KEY) },
++      account: {
++        updateSignerWithKey,
++        getSignerAddress: vi.fn(() => '0x'),
++      },
++    });
++
++    await expect(authenticate(services, POOL_ID)).rejects.toThrow('signer failed');
++    expect(updateSignerWithKey).toHaveBeenCalledWith(DERIVED_KEY);
++    // never reaches the membership check
++    expect(services.viem.read).not.toHaveBeenCalled();
++  });
++});
+diff --git a/frontend-respondents/src/card-signature.seam.test.ts b/frontend-respondents/src/card-signature.seam.test.ts
+new file mode 100644
+index 000000000..12a82c804
+--- /dev/null
++++ b/frontend-respondents/src/card-signature.seam.test.ts
+@@ -0,0 +1,87 @@
++import { describe, it, expect } from 'vitest';
++import { privateKeyToAccount } from 'viem/accounts';
++import { recoverMessageAddress, keccak256, concat, stringToBytes, toBytes } from 'viem';
++
++// Shared card-encoding seam, imported by DIRECT RELATIVE SOURCE PATH
++// (mirroring src/auth.factory.ts's `../../shared/src/shared` precedent) so the
++// test depends on the shared .ts source, never the unbuilt dist.
++import {
++  cardMessageHash,
++  ethSignedMessageHash,
++  signCardMessage,
++} from '../../shared/src/shared/invites/encoding.js';
++
++// Real shared parseCardURL — it uses cardMessageHash + recoverMessageAddress to
++// recover the survey owner from the card signature, the exact round-trip the
++// respondent auth flow (Card.register -> on-chain registerInPool) relies on.
++import { parseCardURL } from '../../shared/src/shared/invites/card.factory.js';
++import type { CardData } from '../../shared/src/shared/invites/types.js';
++
++// Deterministic test identity (20-byte address) doubles as the batchId.
++const BATCH_PK =
++  '0x00000000000000000000000000000000000000000000000000000000000000aa';
++const batchOwner = privateKeyToAccount(BATCH_PK);
++const batchId = batchOwner.address;
++
++const NULLIFIER = 'respondent-123';
++
++describe('shared card-encoding seam (imported by relative source path)', () => {
++  it('cardMessageHash matches the on-chain digest scheme', () => {
++    const digest = cardMessageHash(NULLIFIER, batchId);
++    // keccak256(abi.encodePacked(nullifier, "|", batchId))
++    const expected = keccak256(
++      // encoded bytes: utf8(nullifier) ++ "|" ++ batchId as 20 bytes
++      concat([
++        stringToBytes(NULLIFIER),
++        stringToBytes('|'),
++        toBytes(batchId),
++      ]),
++    );
++    expect(digest).toBe(expected);
++    expect(digest).toMatch(/^0x[0-9a-f]{64}$/);
++  });
++
++  it('ethSignedMessageHash wraps the digest in the EIP-191 personal-sign envelope', () => {
++    const digest = cardMessageHash(NULLIFIER, batchId);
++    const signedHash = ethSignedMessageHash(digest);
++    const expected = keccak256(
++      concat([stringToBytes('\x19Ethereum Signed Message:\n32'), toBytes(digest)]),
++    );
++    expect(signedHash).toBe(expected);
++  });
++
++  it('signCardMessage -> recoverMessageAddress round-trips to the batchId (card-signature -> owner recovery)', async () => {
++    const digest = cardMessageHash(NULLIFIER, batchId);
++    const signature = await signCardMessage(batchOwner, NULLIFIER, batchId);
++
++    // This is exactly what on-chain registerInPool and shared parseCardURL do:
++    // recover the signer from the ethSigned digest and require it == batchId.
++    const recovered = await recoverMessageAddress({
++      message: { raw: digest },
++      signature,
++    });
++
++    expect(recovered).toBe(batchId);
++  });
++
++  it('parseCardURL recovers the survey owner from a signed card URL (auth flow entry point)', async () => {
++    const signature = await signCardMessage(batchOwner, NULLIFIER, batchId);
++    const surveyId = 'survey-roundtrip';
++
++    const href = `http://respondent.local/?n=${NULLIFIER}&b=${batchId}&sig=${signature}&s=${surveyId}`;
++    const data = await parseCardURL(href);
++
++    expect(data).not.toBeNull();
++    const card = data as CardData;
++    expect(card.nullifier).toBe(NULLIFIER);
++    expect(card.batchId).toBe(batchId);
++    expect(card.surveyId).toBe(surveyId);
++    // recovered survey owner == the batchId card was signed by
++    expect(card.surveyOwner).toBe(batchId);
++  });
++
++  it('returns null for a card URL missing required params', async () => {
++    const href = 'http://respondent.local/?n=onlynullifier';
++    await expect(parseCardURL(href)).resolves.toBeNull();
++  });
++});
+diff --git a/frontend-respondents/src/controllers/auth-ctrlr.test.ts b/frontend-respondents/src/controllers/auth-ctrlr.test.ts
+new file mode 100644
+index 000000000..35051e572
+--- /dev/null
++++ b/frontend-respondents/src/controllers/auth-ctrlr.test.ts
+@@ -0,0 +1,173 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// ---- Mocks (hoisted with the factory, so the controller's own imports are
++// intercepted before resolution). We keep the Node environment and never pull
++// jsdom: the small browser surface the controller touches (window/document/
++// alert/localStorage) is stubbed below instead.
++
++const h = vi.hoisted(() => ({
++  // Configurable per-test behaviour of the mocked Card.register().
++  registerImpl: {
++    current: () => Promise.resolve({ receipt: { status: 'success' } }),
++  },
++  // Every Card instance created by the controller is captured here.
++  instances: [] as any[],
++}));
++
++vi.mock('@s3ntiment/shared', () => ({
++  Card: class {
++    public data: any;
++    public register = vi.fn((...args: any[]) => h.registerImpl.current(...args));
++    constructor(data: any) {
++      this.data = data;
++      h.instances.push(this);
++    }
++  },
++  parseCardURL: vi.fn(),
++  fetchSurvey: vi.fn(),
++}));
++vi.mock('@s3ntiment/shared/components', () => ({}));
++vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
++vi.mock('../auth.factory.js', () => ({ authenticate: vi.fn() }));
++vi.mock('../onpageload.js', () => ({ removeSplash: vi.fn() }));
++
++import { AuthController } from './auth-ctrlr.js';
++// These resolve to the mocked factories above.
++import { Card, parseCardURL, fetchSurvey } from '@s3ntiment/shared';
++import { router } from '../router.js';
++import { authenticate } from '../auth.factory.js';
++import { store } from '../state/store.js';
++
++const SURVEY_ID = 'survey-abc';
++const POOL_ID = '0x00000000000000000000000000000000000000be';
++const IPFS_CID = 'QmFakeCid';
++const CREATED_AT = '2026-08-28T00:00:00.000Z';
++const CARD_URL =
++  'http://respondent.local/?n=user-1&b=0x00000000000000000000000000000000000000ff&sig=0x1234&s=' +
++  SURVEY_ID;
++
++const CARD_DATA = {
++  nullifier: 'user-1',
++  batchId: '0x00000000000000000000000000000000000000ff',
++  signature: '0x1234',
++  surveyOwner: '0x00000000000000000000000000000000000000ee',
++  surveyId: SURVEY_ID,
++};
++
++function fakeServices(): any {
++  return { account: { getAddress: vi.fn(() => '0x00000000000000000000000000000000000000aa') } };
++}
++
++function installBrowserGlobals() {
++  (globalThis as any).window = { location: { href: CARD_URL } };
++  (globalThis as any).document = {
++    // '#app' and '#auth-content' both return a plain element node.
++    querySelector: () => ({ innerHTML: '', style: {} }),
++  };
++  (globalThis as any).alert = vi.fn();
++
++  // Minimal in-memory localStorage so importing src/state/store.js (real) works.
++  const mem = new Map<string, string>();
++  (globalThis as any).localStorage = {
++    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
++    setItem: (k: string, v: string) => void mem.set(k, String(v)),
++    removeItem: (k: string) => void mem.delete(k),
++  };
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  h.registerImpl.current = () => Promise.resolve({ receipt: { status: 'success' } });
++  h.instances.length = 0;
++  installBrowserGlobals();
++
++  (parseCardURL as any).mockResolvedValue(CARD_DATA);
++  (fetchSurvey as any).mockResolvedValue([IPFS_CID, POOL_ID, CREATED_AT]);
++  (authenticate as any).mockResolvedValue(false);
++});
++
++describe('AuthController (root route "/")', () => {
++  it('runs the full auth+registration flow: parse -> fetch -> store -> authenticate -> register -> navigate', async () => {
++    const ctrl = new AuthController(fakeServices());
++    await ctrl.render();
++
++    // parseCardURL is fed the live window location
++    expect(parseCardURL).toHaveBeenCalledWith(window.location.href);
++
++    // fetchSurvey called with (services, surveyStore, surveyId)
++    expect(fetchSurvey).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      SURVEY_ID,
++    );
++
++    // survey metadata persisted into the store
++    expect(store.getSurveyData(SURVEY_ID)).toMatchObject({
++      id: SURVEY_ID,
++      pool: POOL_ID,
++    });
++
++    // authenticate invoked with (services, poolId)
++    expect(authenticate).toHaveBeenCalledWith(expect.anything(), POOL_ID);
++
++    // not (yet) a participant -> card.register (on-chain registerInPool, waits
++    // for receipt) is called with (services, surveyStore, poolId)
++    const card: any = h.instances[0];
++    expect(card).toBeDefined();
++    expect(card.register).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      POOL_ID,
++    );
++
++    // success receipt -> navigate straight to the survey
++    expect(router.navigate).toHaveBeenCalledTimes(1);
++    expect(router.navigate).toHaveBeenCalledWith('/surveys/' + SURVEY_ID);
++    expect((globalThis as any).alert).not.toHaveBeenCalled();
++  });
++
++  it('skips card.register and navigates when the user is already a participant', async () => {
++    (authenticate as any).mockResolvedValue(true);
++
++    const ctrl = new AuthController(fakeServices());
++    await ctrl.render();
++
++    expect(router.navigate).toHaveBeenCalledWith('/surveys/' + SURVEY_ID);
++    // already a participant -> no on-chain registration
++    expect(h.instances.length).toBe(1); // Card still constructed
++    expect(h.instances[0].register).not.toHaveBeenCalled();
++  });
++
++  it('alerts and does not navigate when the registration receipt is not success', async () => {
++    h.registerImpl.current = () =>
++      Promise.resolve({ receipt: { status: 'reverted' } });
++
++    const ctrl = new AuthController(fakeServices());
++    await ctrl.render();
++
++    expect((globalThis as any).alert).toHaveBeenCalledWith('❌ Card validation failed');
++    expect(router.navigate).not.toHaveBeenCalled();
++  });
++
++  it('alerts and does not navigate when card.register rejects', async () => {
++    h.registerImpl.current = () => Promise.reject(new Error('register failed'));
++
++    const ctrl = new AuthController(fakeServices());
++    await ctrl.render();
++
++    expect((globalThis as any).alert).toHaveBeenCalledWith('❌ Card validation failed');
++    expect(router.navigate).not.toHaveBeenCalled();
++  });
++
++  it('does nothing when no card is present on the URL', async () => {
++    (parseCardURL as any).mockResolvedValue(null);
++
++    const ctrl = new AuthController(fakeServices());
++    await ctrl.render();
++
++    expect(fetchSurvey).not.toHaveBeenCalled();
++    expect(authenticate).not.toHaveBeenCalled();
++    expect(h.instances.length).toBe(0);
++    expect(router.navigate).not.toHaveBeenCalled();
++  });
++});
+diff --git a/frontend-respondents/test/setup.ts b/frontend-respondents/test/setup.ts
+new file mode 100644
+index 000000000..944afe5b9
+--- /dev/null
++++ b/frontend-respondents/test/setup.ts
+@@ -0,0 +1,21 @@
++// vitest setup — runs before each test file's module graph is imported.
++//
++// Some code under test touches browser globals at *import time* (e.g.
++// src/state/store.ts instantiates UserStore, which reads localStorage in its
++// constructor). Rather than pulling in jsdom, we install minimal Node-side
++// stubs for the few globals the auth test graph touches. Tests may override
++// these (window.location.href, alert) per-case.
++
++(globalThis as any).localStorage = (() => {
++  const mem = new Map<string, string>();
++  return {
++    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
++    setItem: (k: string, v: string) => void mem.set(k, String(v)),
++    removeItem: (k: string) => void mem.delete(k),
++    clear: () => mem.clear(),
++  };
++})();
++
++(globalThis as any).window = { location: { href: '' } };
++(globalThis as any).document = { querySelector: () => null };
++(globalThis as any).alert = (_msg?: any) => {};
+diff --git a/frontend-respondents/vitest.config.ts b/frontend-respondents/vitest.config.ts
+new file mode 100644
+index 000000000..6893ad9da
+--- /dev/null
++++ b/frontend-respondents/vitest.config.ts
+@@ -0,0 +1,22 @@
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  // Logic tests run in the Node environment. We never pull jsdom — any
++  // browser surface needed by the controller/component tests is stubbed via
++  // mocks (window/document/router) instead of a DOM library.
++  test: {
++    environment: 'node',
++    include: ['src/**/*.test.ts'],
++    setupFiles: ['./test/setup.ts'],
++    // Keep test output focused; files already log their own paths.
++    reporters: ['default'],
++  },
++  resolve: {
++    alias: {
++      // Mirror vite.config.js: neutralize any transitive React imports so the
++      // test graph can't accidentally pull React into the node environment.
++      react: new URL('./src/empty-module.ts', import.meta.url).pathname,
++      'react-dom': new URL('./src/empty-module.ts', import.meta.url).pathname,
++    },
++  },
++});
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index cb3558bf5..34e057505 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -290,6 +290,9 @@ importers:
+       vite-plugin-wasm:
+         specifier: ^3.5.0
+         version: 3.5.0(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
++      vitest:
++        specifier: ^4.1.11
++        version: 4.1.11(@types/node@24.10.14)(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
+ 
+   nillcc-backend:
+     dependencies:
+@@ -2588,6 +2591,9 @@ packages:
+   '@types/body-parser@1.19.6':
+     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
+ 
++  '@types/chai@5.2.3':
++    resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
++
+   '@types/connect@3.4.38':
+     resolution: {integrity: sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==}
+ 
+@@ -2690,6 +2696,9 @@ packages:
+   '@types/debug@4.1.12':
+     resolution: {integrity: sha512-vIChWdVG3LG1SMxEvI/AK+FWJthlrqlTu7fbrlywTkkaONwk/UAGaULXRlf8vkzFBLVm0zkMdCquhL5aOjhXPQ==}
+ 
++  '@types/deep-eql@4.0.2':
++    resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
++
+   '@types/estree@1.0.8':
+     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
+ 
+@@ -2805,6 +2814,35 @@ packages:
+     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+     deprecated: Potential CWE-502 - Update to 1.3.1 or higher
+ 
++  '@vitest/expect@4.1.11':
++    resolution: {integrity: sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==}
++
++  '@vitest/mocker@4.1.11':
++    resolution: {integrity: sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==}
++    peerDependencies:
++      msw: ^2.4.9
++      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
++    peerDependenciesMeta:
++      msw:
++        optional: true
++      vite:
++        optional: true
++
++  '@vitest/pretty-format@4.1.11':
++    resolution: {integrity: sha512-yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw==}
++
++  '@vitest/runner@4.1.11':
++    resolution: {integrity: sha512-LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw==}
++
++  '@vitest/snapshot@4.1.11':
++    resolution: {integrity: sha512-pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog==}
++
++  '@vitest/spy@4.1.11':
++    resolution: {integrity: sha512-apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA==}
++
++  '@vitest/utils@4.1.11':
++    resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
++
+   '@wagmi/core@2.22.1':
+     resolution: {integrity: sha512-cG/xwQWsBEcKgRTkQVhH29cbpbs/TdcUJVFXCyri3ZknxhMyGv0YEjTcrNpRgt2SaswL1KrvslSNYKKo+5YEAg==}
+     peerDependencies:
+@@ -3052,6 +3090,10 @@ packages:
+   assertion-error@1.1.0:
+     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
+ 
++  assertion-error@2.0.1:
++    resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
++    engines: {node: '>=12'}
++
+   asynckit@0.4.0:
+     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
+ 
+@@ -3485,6 +3527,10 @@ packages:
+     resolution: {integrity: sha512-N6gU2GsJS8RR5gy1d9wQcSPgn9FGJFY7KNvdDRlwHfz6kCxrQr2TDnrjXHmr6TFSl6Fd0FC4zRnityEldjRGvQ==}
+     engines: {node: '>=16'}
+ 
++  chai@6.2.2:
++    resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
++    engines: {node: '>=18'}
++
+   chalk-template@0.4.0:
+     resolution: {integrity: sha512-/ghrgmhfY8RaSdeo43hNXxpoHAtxdbskUHjPpfqUWGttFgycUhYPGx3YZBCnUCvOa7Doivn1IZec3DEGFoMgLg==}
+     engines: {node: '>=12'}
+@@ -4049,6 +4095,9 @@ packages:
+     resolution: {integrity: sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==}
+     engines: {node: '>= 0.4'}
+ 
++  es-module-lexer@2.3.2:
++    resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
++
+   es-object-atoms@1.1.1:
+     resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==}
+     engines: {node: '>= 0.4'}
+@@ -4097,6 +4146,9 @@ packages:
+   estree-walker@2.0.2:
+     resolution: {integrity: sha512-Rfkk/Mp/DL7JVje3u18FxFujQlTNR2q6QfMSMB7AvCBx91NGj/ba3kCfza0f6dVDbw7YlRf/nDrn7pQrCCyQ/w==}
+ 
++  estree-walker@3.0.3:
++    resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
++
+   esutils@2.0.3:
+     resolution: {integrity: sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==}
+     engines: {node: '>=0.10.0'}
+@@ -4140,6 +4192,10 @@ packages:
+     resolution: {integrity: sha512-Zk/eNKV2zbjpKzrsQ+n1G6poVbErQxJ0LBOJXaKZ1EViLzH+hrLu9cdXI4zw9dBQJslwBEpbQ2P1oS7nDxs6jQ==}
+     engines: {node: '>= 0.8.0'}
+ 
++  expect-type@1.4.0:
++    resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
++    engines: {node: '>=12.0.0'}
++
+   expect@30.2.0:
+     resolution: {integrity: sha512-u/feCi0GPsI+988gU2FLcsHyAHTU0MX1Wg68NhAnN7z/+C5wqG+CY8J53N9ioe8RXgaoz0nBR/TYMf3AycUuPw==}
+     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
+@@ -5138,6 +5194,10 @@ packages:
+     resolution: {integrity: sha512-nK28WOo+QIjBkDduTINE4JkF/UJJKyf2EJxvJKfblDpyg0Q+pkOHNTL0Qwy6NP6FhE/EnzV73BxxqcJaXY9anw==}
+     engines: {node: '>= 0.4'}
+ 
++  obug@2.1.4:
++    resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
++    engines: {node: '>=12.20.0'}
++
+   ofetch@1.5.1:
+     resolution: {integrity: sha512-2W4oUZlVaqAPAil6FUg/difl6YhqhUR7x2eZY4bQCko22UXg3hptq9KLQdqFClV+Wu85UX7hNtdGTngi/1BxcA==}
+ 
+@@ -5290,6 +5350,9 @@ packages:
+   path-to-regexp@3.3.0:
+     resolution: {integrity: sha512-qyCH421YQPS2WFDxDjftfc1ZR5WKQzVzqsp4n9M2kQhVOo/ByahFoUNJfl58kOcEGfQ//7weFTDhm+ss8Ecxgw==}
+ 
++  pathe@2.0.3:
++    resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
++
+   pbkdf2@3.1.5:
+     resolution: {integrity: sha512-Q3CG/cYvCO1ye4QKkuH7EXxs3VC/rI1/trd+qX2+PolbaKG0H+bgcZzrTt96mMyRtejk+JMCiLUn3y29W8qmFQ==}
+     engines: {node: '>= 0.10'}
+@@ -5904,6 +5967,9 @@ packages:
+     resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==}
+     engines: {node: '>= 0.4'}
+ 
++  siginfo@2.0.0:
++    resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
++
+   signal-exit@3.0.7:
+     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
+ 
+@@ -6003,6 +6069,9 @@ packages:
+     resolution: {integrity: sha512-XlkWvfIm6RmsWtNJx+uqtKLS8eqFbxUg0ZzLXqY0caEy9l7hruX8IpiDnjsLavoBgqCCR71TqWO8MaXYheJ3RQ==}
+     engines: {node: '>=10'}
+ 
++  stackback@0.0.2:
++    resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
++
+   stackframe@1.3.4:
+     resolution: {integrity: sha512-oeVtt7eWQS+Na6F//S4kJ2K2VbRlS9D43mAlMyVpVWovy9o+jfgH8O9agzANzaiLjclA0oYzUXEM4PurhSUChw==}
+ 
+@@ -6010,6 +6079,9 @@ packages:
+     resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
+     engines: {node: '>= 0.8'}
+ 
++  std-env@4.2.0:
++    resolution: {integrity: sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==}
++
+   stream-browserify@3.0.0:
+     resolution: {integrity: sha512-H73RAHsVBapbim0tU2JwwOiXUj+fikfiaoYAKHF3VJfA0pe2BCzkhAHBlLG6REzE+2WNZcxOXjK7lkso+9euLA==}
+ 
+@@ -6138,10 +6210,21 @@ packages:
+     resolution: {integrity: sha512-9phl76Cqm6FhSX9Xe1ZUAMLtm1BLkKj2Qd5ApyWkXzsMRaA7dgr81kf4wJmQf/hAvg8EEyJxDo3du/0KlhPiKQ==}
+     engines: {node: '>=0.6.0'}
+ 
++  tinybench@2.9.0:
++    resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
++
++  tinyexec@1.3.0:
++    resolution: {integrity: sha512-QKAl9m8gWWGHV8jZcPeym6j+XULi6tOf1mT83WYJ4Lk2ytW/uwAWkrP0uFsdoYMdueVJ0qs26wZ+23xeB4ibNQ==}
++    engines: {node: '>=18'}
++
+   tinyglobby@0.2.15:
+     resolution: {integrity: sha512-j2Zq4NyQYG5XMST4cbs02Ak8iJUdxRM0XI5QyxXuZOzKOINmWurp3smXu3y5wDcJrptwpSjgXHzIQxR0omXljQ==}
+     engines: {node: '>=12.0.0'}
+ 
++  tinyrainbow@3.1.1:
++    resolution: {integrity: sha512-yau8yJdTt989Mm0Bd/236QnzEiPf2xLLTqUZRUJOo/3CB078LSwzei343DgtJVmfJKJE3TMINY1u42SQsP6mXw==}
++    engines: {node: '>=14.0.0'}
++
+   tmpl@1.0.5:
+     resolution: {integrity: sha512-3f0uOEAQwIqGuWW2MVzYg8fV/QNnc/IpuJNG837rLuczAaLVHslWHZQj4IGiEl5Hs3kkbhwL9Ab7Hrsmuj+Smw==}
+ 
+@@ -6532,6 +6615,47 @@ packages:
+       yaml:
+         optional: true
+ 
++  vitest@4.1.11:
++    resolution: {integrity: sha512-fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw==}
++    engines: {node: ^20.0.0 || ^22.0.0 || >=24.0.0}
++    hasBin: true
++    peerDependencies:
++      '@edge-runtime/vm': '*'
++      '@opentelemetry/api': ^1.9.0
++      '@types/node': ^20.0.0 || ^22.0.0 || >=24.0.0
++      '@vitest/browser-playwright': 4.1.11
++      '@vitest/browser-preview': 4.1.11
++      '@vitest/browser-webdriverio': 4.1.11
++      '@vitest/coverage-istanbul': 4.1.11
++      '@vitest/coverage-v8': 4.1.11
++      '@vitest/ui': 4.1.11
++      happy-dom: '*'
++      jsdom: '*'
++      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
++    peerDependenciesMeta:
++      '@edge-runtime/vm':
++        optional: true
++      '@opentelemetry/api':
++        optional: true
++      '@types/node':
++        optional: true
++      '@vitest/browser-playwright':
++        optional: true
++      '@vitest/browser-preview':
++        optional: true
++      '@vitest/browser-webdriverio':
++        optional: true
++      '@vitest/coverage-istanbul':
++        optional: true
++      '@vitest/coverage-v8':
++        optional: true
++      '@vitest/ui':
++        optional: true
++      happy-dom:
++        optional: true
++      jsdom:
++        optional: true
++
+   vm-browserify@1.1.2:
+     resolution: {integrity: sha512-2ham8XPWTONajOR0ohOKOHXkm3+gaBmGut3SRuu75xLd/RRaY6vqgh8NBYYk7+RW3u5AtzPQZG8F10LHkl0lAQ==}
+ 
+@@ -6565,6 +6689,11 @@ packages:
+     engines: {node: '>= 8'}
+     hasBin: true
+ 
++  why-is-node-running@2.3.0:
++    resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
++    engines: {node: '>=8'}
++    hasBin: true
++
+   widest-line@4.0.1:
+     resolution: {integrity: sha512-o0cyEG0e8GPzT4iGHphIOh0cJOV8fivsXxddQasHPHfoZf1ZexrfeA21w2NaEN1RHE+fXlfISmOE8R9N3u3Qig==}
+     engines: {node: '>=12'}
+@@ -12437,6 +12566,11 @@ snapshots:
+       '@types/connect': 3.4.38
+       '@types/node': 24.10.14
+ 
++  '@types/chai@5.2.3':
++    dependencies:
++      '@types/deep-eql': 4.0.2
++      assertion-error: 2.0.1
++
+   '@types/connect@3.4.38':
+     dependencies:
+       '@types/node': 24.10.14
+@@ -12566,6 +12700,8 @@ snapshots:
+     dependencies:
+       '@types/ms': 2.1.0
+ 
++  '@types/deep-eql@4.0.2': {}
++
+   '@types/estree@1.0.8': {}
+ 
+   '@types/express-serve-static-core@4.19.8':
+@@ -12696,6 +12832,47 @@ snapshots:
+ 
+   '@ungap/structured-clone@1.3.0': {}
+ 
++  '@vitest/expect@4.1.11':
++    dependencies:
++      '@standard-schema/spec': 1.1.0
++      '@types/chai': 5.2.3
++      '@vitest/spy': 4.1.11
++      '@vitest/utils': 4.1.11
++      chai: 6.2.2
++      tinyrainbow: 3.1.1
++
++  '@vitest/mocker@4.1.11(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))':
++    dependencies:
++      '@vitest/spy': 4.1.11
++      estree-walker: 3.0.3
++      magic-string: 0.30.21
++    optionalDependencies:
++      vite: 7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)
++
++  '@vitest/pretty-format@4.1.11':
++    dependencies:
++      tinyrainbow: 3.1.1
++
++  '@vitest/runner@4.1.11':
++    dependencies:
++      '@vitest/utils': 4.1.11
++      pathe: 2.0.3
++
++  '@vitest/snapshot@4.1.11':
++    dependencies:
++      '@vitest/pretty-format': 4.1.11
++      '@vitest/utils': 4.1.11
++      magic-string: 0.30.21
++      pathe: 2.0.3
++
++  '@vitest/spy@4.1.11': {}
++
++  '@vitest/utils@4.1.11':
++    dependencies:
++      '@vitest/pretty-format': 4.1.11
++      convert-source-map: 2.0.0
++      tinyrainbow: 3.1.1
++
+   '@wagmi/core@2.22.1(@types/react@19.2.18)(typescript@5.8.3)(viem@2.46.2(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.3))':
+     dependencies:
+       eventemitter3: 5.0.1
+@@ -13423,6 +13600,8 @@ snapshots:
+ 
+   assertion-error@1.1.0: {}
+ 
++  assertion-error@2.0.1: {}
++
+   asynckit@0.4.0: {}
+ 
+   atomic-sleep@1.0.0: {}
+@@ -14209,6 +14388,8 @@ snapshots:
+ 
+   cbor-web@9.0.2: {}
+ 
++  chai@6.2.2: {}
++
+   chalk-template@0.4.0:
+     dependencies:
+       chalk: 4.1.2
+@@ -14834,6 +15015,8 @@ snapshots:
+ 
+   es-errors@1.3.0: {}
+ 
++  es-module-lexer@2.3.2: {}
++
+   es-object-atoms@1.1.1:
+     dependencies:
+       es-errors: 1.3.0
+@@ -14898,6 +15081,10 @@ snapshots:
+ 
+   estree-walker@2.0.2: {}
+ 
++  estree-walker@3.0.3:
++    dependencies:
++      '@types/estree': 1.0.8
++
+   esutils@2.0.3: {}
+ 
+   etag@1.8.1: {}
+@@ -15019,6 +15206,8 @@ snapshots:
+ 
+   exit@0.1.2: {}
+ 
++  expect-type@1.4.0: {}
++
+   expect@30.2.0:
+     dependencies:
+       '@jest/expect-utils': 30.2.0
+@@ -16176,6 +16365,8 @@ snapshots:
+       has-symbols: 1.1.0
+       object-keys: 1.1.1
+ 
++  obug@2.1.4: {}
++
+   ofetch@1.5.1:
+     dependencies:
+       destr: 2.0.5
+@@ -16460,6 +16651,8 @@ snapshots:
+ 
+   path-to-regexp@3.3.0: {}
+ 
++  pathe@2.0.3: {}
++
+   pbkdf2@3.1.5:
+     dependencies:
+       create-hash: 1.2.0
+@@ -17200,6 +17393,8 @@ snapshots:
+       side-channel-map: 1.0.1
+       side-channel-weakmap: 1.0.2
+ 
++  siginfo@2.0.0: {}
++
+   signal-exit@3.0.7: {}
+ 
+   signal-exit@4.1.0: {}
+@@ -17304,10 +17499,14 @@ snapshots:
+     dependencies:
+       escape-string-regexp: 2.0.0
+ 
++  stackback@0.0.2: {}
++
+   stackframe@1.3.4: {}
+ 
+   statuses@2.0.2: {}
+ 
++  std-env@4.2.0: {}
++
+   stream-browserify@3.0.0:
+     dependencies:
+       inherits: 2.0.4
+@@ -17443,11 +17642,17 @@ snapshots:
+     dependencies:
+       setimmediate: 1.0.5
+ 
++  tinybench@2.9.0: {}
++
++  tinyexec@1.3.0: {}
++
+   tinyglobby@0.2.15:
+     dependencies:
+       fdir: 6.5.0(picomatch@4.0.3)
+       picomatch: 4.0.3
+ 
++  tinyrainbow@3.1.1: {}
++
+   tmpl@1.0.5: {}
+ 
+   to-buffer@1.2.2:
+@@ -17887,6 +18092,33 @@ snapshots:
+       terser: 5.46.0
+       tsx: 4.21.0
+ 
++  vitest@4.1.11(@types/node@24.10.14)(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)):
++    dependencies:
++      '@vitest/expect': 4.1.11
++      '@vitest/mocker': 4.1.11(vite@7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0))
++      '@vitest/pretty-format': 4.1.11
++      '@vitest/runner': 4.1.11
++      '@vitest/snapshot': 4.1.11
++      '@vitest/spy': 4.1.11
++      '@vitest/utils': 4.1.11
++      es-module-lexer: 2.3.2
++      expect-type: 1.4.0
++      magic-string: 0.30.21
++      obug: 2.1.4
++      pathe: 2.0.3
++      picomatch: 4.0.3
++      std-env: 4.2.0
++      tinybench: 2.9.0
++      tinyexec: 1.3.0
++      tinyglobby: 0.2.15
++      tinyrainbow: 3.1.1
++      vite: 7.3.1(@types/node@24.10.14)(sass-embedded@1.97.3)(sass@1.99.0)(terser@5.46.0)(tsx@4.21.0)
++      why-is-node-running: 2.3.0
++    optionalDependencies:
++      '@types/node': 24.10.14
++    transitivePeerDependencies:
++      - msw
++
+   vm-browserify@1.1.2: {}
+ 
+   wait-on@9.0.4(debug@4.4.3(supports-color@8.1.1)):
+@@ -17930,6 +18162,11 @@ snapshots:
+     dependencies:
+       isexe: 2.0.0
+ 
++  why-is-node-running@2.3.0:
++    dependencies:
++      siginfo: 2.0.0
++      stackback: 0.0.2
++
+   widest-line@4.0.1:
+     dependencies:
+       string-width: 5.1.2
