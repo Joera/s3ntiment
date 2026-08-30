@@ -8,7 +8,7 @@ import { SurveyController } from './survey.ctrlr.js';
 import { ViemService, LitService, IPFSMethods } from "@s3ntiment/shared";
 import {initStorage, LitPoolKeys } from "@s3ntiment/shared/node"
 import { verifyMessage } from 'viem';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { PoolController } from './pool.ctrlr.js';
 import { NillionPkpClient } from './services/nildb.pkp.service.js';
 

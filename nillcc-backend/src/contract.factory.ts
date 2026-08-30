@@ -1,6 +1,6 @@
 import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 
 
 const client = createPublicClient({

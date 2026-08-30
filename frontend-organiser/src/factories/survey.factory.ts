@@ -4,7 +4,7 @@ import { Batch } from "@s3ntiment/shared";
 
 import { isCid } from "../utils/regex";
 import { createBatchWallet, createZipFile, generateCardSecrets, uploadToPinata } from "./invitation.factory";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { toSafeSmartAccount } from "permissionless/accounts";
 
 

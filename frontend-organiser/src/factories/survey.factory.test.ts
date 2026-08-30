@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { base } from 'viem/chains';
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' };
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 
 // survey.factory's only heavy/network surface is delegated to invitation.factory
 // (createBatchWallet / generateCardSecrets / uploadToPinata), which we mock here.

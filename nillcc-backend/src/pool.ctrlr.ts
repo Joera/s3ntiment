@@ -1,5 +1,5 @@
 import { compactAction, encryptAction, getDecryptForOwnerAction, getDecryptForRespondentAction, getPkpPublicKeyAction, ownerInvocationAction, publicKeyToDidKey, userDelegationAction  } from "@s3ntiment/shared";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' with { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import { NillionPkpClient } from "./services/nildb.pkp.service.js";
 import { NucCmd } from "@nillion/secretvaults";
 

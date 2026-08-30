@@ -4,7 +4,7 @@ import { store } from "../state/store.js";
 import { reactive } from "../utils/reactive.js";
 
 import { router } from "../router.js";
-import surveyStore from 's3ntiment-contracts/deployments/base/S3ntimentSurveyStore.json' assert { type: 'json' }
+import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import {  Batch, Card, CardData, Pool, Survey } from "@s3ntiment/shared";
 import '@s3ntiment/shared/components';
 import { createCsvFile, createZipFile } from "../factories/invitation.factory.js";
