@@ -75,6 +75,13 @@ contract S3ntimentSurveyStore {
         uint256 createdAt;
     }
 
+    // Lightweight projection of a Survey for read-only list methods.
+    struct SurveyRef {
+        string id;
+        string ipfsCid;
+        uint256 createdAt;
+    }
+
     struct Batch {
         uint256 createdAt;
         uint256 cardCount;      // cards redeemed from this batch
@@ -252,6 +259,41 @@ contract S3ntimentSurveyStore {
 
     function getPoolSurveys(string memory poolId) external view returns (string[] memory) {
         return poolSurveys[poolId];
+    }
+
+    /**
+     * @dev Returns the pool's surveys created after `since` (exclusive), in pool
+     *      insertion order. Unknown pool -> empty array (no revert). Read-only.
+     */
+    function getPoolSurveysSince(string memory poolId, uint256 since)
+        external
+        view
+        returns (SurveyRef[] memory)
+    {
+        string[] memory ids = poolSurveys[poolId];
+
+        // First pass: count matches (createdAt strictly greater than `since`).
+        uint256 count = 0;
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (surveys[ids[i]].createdAt > since) {
+                count++;
+            }
+        }
+
+        SurveyRef[] memory refs = new SurveyRef[](count);
+        uint256 j = 0;
+        for (uint256 i = 0; i < ids.length; i++) {
+            Survey memory survey = surveys[ids[i]];
+            if (survey.createdAt > since) {
+                refs[j] = SurveyRef({
+                    id: ids[i],
+                    ipfsCid: survey.ipfsCid,
+                    createdAt: survey.createdAt
+                });
+                j++;
+            }
+        }
+        return refs;
     }
 
     // =========================================================================

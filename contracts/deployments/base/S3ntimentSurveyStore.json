@@ -13,12 +13,27 @@
     },
     {
       "inputs": [],
+      "name": "BatchMaxCardsReached",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "BatchNotFound",
       "type": "error"
     },
     {
       "inputs": [],
+      "name": "BatchRevoked",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "InvalidBatchId",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidBatchIds",
       "type": "error"
     },
     {
@@ -175,6 +190,47 @@
           "internalType": "string[]",
           "name": "",
           "type": "string[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "poolId",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "since",
+          "type": "uint256"
+        }
+      ],
+      "name": "getPoolSurveysSince",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "ipfsCid",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "createdAt",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct S3ntimentSurveyStore.SurveyRef[]",
+          "name": "",
+          "type": "tuple[]"
         }
       ],
       "stateMutability": "view",
@@ -379,11 +435,52 @@
         },
         {
           "internalType": "address",
+          "name": "batchId",
+          "type": "address"
+        }
+      ],
+      "name": "revokeBatch",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "poolId",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
           "name": "member",
           "type": "address"
         }
       ],
       "name": "revokeMember",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "poolId",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "batchId",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maxCards",
+          "type": "uint256"
+        }
+      ],
+      "name": "setBatchMaxCards",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
