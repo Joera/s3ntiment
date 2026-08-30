@@ -9,6 +9,11 @@ import {
   savePoolsToStorage,
   loadUserFromStorage,
   saveUserToStorage,
+  clearBootstrapKey,
+  loadDerivedSKeyFromStorage,
+  saveDerivedSKeyFromStorage,
+  loadAnchorAddressFromStorage,
+  saveAnchorAddressFromStorage,
 } from './storage.js';
 import type { Pool } from '@s3ntiment/shared';
 
@@ -308,5 +313,58 @@ describe('SurveysStore.clear(surveyId)', () => {
     expect(ss.activeSurveyId).toBeNull();
     expect(ss.active).toBeNull();
     expect((globalThis as any).localStorage.getItem('surveys')).toBeNull();
+  });
+});
+
+describe('Stealth-account storage helpers (anchor_address / derived S / clear-bootstrap)', () => {
+  beforeEach(() => {
+    (globalThis as any).localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('adds derived-S write/read helpers keyed to DERIVED_S_STORAGE_KEY', () => {
+    const ls = (globalThis as any).localStorage;
+    expect(ls.getItem('derivedS')).toBeNull();
+
+    saveDerivedSKeyFromStorage('0x1111111111111111111111111111111111111111111111111111111111111111');
+    expect(loadDerivedSKeyFromStorage()).toBe(
+      '0x1111111111111111111111111111111111111111111111111111111111111111',
+    );
+    expect(ls.getItem('derivedS')).toBe(
+      '0x1111111111111111111111111111111111111111111111111111111111111111',
+    );
+  });
+
+  it('rejects a malformed (non-64-hex) derived-S value, returning null', () => {
+    saveDerivedSKeyFromStorage('0x1234');
+    expect(loadDerivedSKeyFromStorage()).toBeNull();
+
+    saveDerivedSKeyFromStorage('not-a-key');
+    expect(loadDerivedSKeyFromStorage()).toBeNull();
+  });
+
+  it('anchor_address is undefined when absent and round-trips when saved', () => {
+    const ls = (globalThis as any).localStorage;
+    expect(loadAnchorAddressFromStorage()).toBeUndefined();
+
+    saveAnchorAddressFromStorage('you@example.com');
+    expect(loadAnchorAddressFromStorage()).toBe('you@example.com');
+    expect(ls.getItem('anchor_address')).toBe('you@example.com');
+  });
+
+  it('clearBootstrapKey wipes bootstrapE (N1 wipe) and leaves derived-S intact', () => {
+    const ls = (globalThis as any).localStorage;
+    const BOOTSTRAP_KEY = 'bootstrapE';
+    ls.setItem(BOOTSTRAP_KEY, '0x2222222222222222222222222222222222222222222222222222222222222222');
+    ls.setItem('derivedS', '0x3333333333333333333333333333333333333333333333333333333333333333');
+
+    clearBootstrapKey();
+
+    expect(ls.getItem(BOOTSTRAP_KEY)).toBeNull();
+    expect(ls.getItem('derivedS')).not.toBeNull();
+    // the derived-S helper still reads the kept value
+    expect(loadDerivedSKeyFromStorage()).toBe(
+      '0x3333333333333333333333333333333333333333333333333333333333333333',
+    );
   });
 });

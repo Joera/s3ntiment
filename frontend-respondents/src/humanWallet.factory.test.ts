@@ -110,7 +110,9 @@ describe('authenticate', () => {
 
     const result = await authenticate(services, POOL_ID);
 
-    expect(result).toBe(true);
+    expect(result.participating).toBe(true);
+    expect(result.key).toBe(DERIVED_KEY);
+    expect(result.address).toBe(SIGNER);
     expect(login).toHaveBeenCalledTimes(1);
     expect(signMessage).toHaveBeenCalledWith(
       `Sign in with your unlinkable account for respondent pool ${POOL_ID}`,
@@ -142,7 +144,11 @@ describe('authenticate', () => {
 
     const result = await authenticate(services, POOL_ID);
 
-    expect(result).toBe(false);
+    expect(result).toEqual({
+      key: DERIVED_KEY,
+      address: SIGNER,
+      participating: false,
+    });
   });
 
   it('propagates rejection from waap.login and stops the flow', async () => {
