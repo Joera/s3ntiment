@@ -1,8 +1,0 @@
-import type { LitAuthStorageProvider } from './types';
-interface LocalStorageConfig {
-    appName: string;
-    localStorage?: WindowLocalStorage['localStorage'];
-    networkName: string;
-}
-export declare function localStorage({ appName, networkName, localStorage, }: LocalStorageConfig): LitAuthStorageProvider;
-export {};

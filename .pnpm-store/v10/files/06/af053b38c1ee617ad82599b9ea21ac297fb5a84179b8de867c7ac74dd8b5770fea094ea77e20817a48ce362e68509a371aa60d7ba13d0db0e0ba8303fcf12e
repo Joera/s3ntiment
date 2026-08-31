@@ -1,1 +1,0 @@
-{"version":3,"file":"closeTo.d.ts","sourceRoot":"","sources":["../../../../src/matchers/numbers/closeTo.ts"],"names":[],"mappings":"AAEA,OAAO,QAAQ,iBAAiB,CAAC;IAC/B,UAAU,QAAQ;QAChB;;;;;;;;;;;;;;;;;;;;WAoBG;QACH,OAAO,CAAC,MAAM,EAAE,MAAM,EAAE,KAAK,EAAE,MAAM,GAAG,KAAK,CAAA;KAC9C;CACF;AAID,wBAAgB,OAAO,CAAC,MAAM,EAAE,MAAM,EAAE,KAAK,EAAE,MAAM,WAGpC,OAAO,aAEvB"}

@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.nagaMainnet = void 0;
-var naga_mainnet_module_1 = require("./naga-mainnet.module");
-Object.defineProperty(exports, "nagaMainnet", { enumerable: true, get: function () { return naga_mainnet_module_1.nagaMainnet; } });
-//# sourceMappingURL=index.js.map

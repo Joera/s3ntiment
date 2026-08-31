@@ -1,3 +1,0 @@
-export type CanonicalType = ReturnType<typeof getCanonicalType>;
-export declare function getCanonicalType(value: unknown): "string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function" | "null" | "Function" | "Array" | "Error" | "Date" | "RegExp" | "Map" | "Set" | "Promise" | "String" | "Number" | "Boolean" | "WeakMap" | "WeakSet" | "Object";
-//# sourceMappingURL=getCanonicalType.d.ts.map

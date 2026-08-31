@@ -1,5 +1,0 @@
-import { CompilationUnit } from "@nomicfoundation/slang/compilation";
-export declare function compilationUnitFromContent({ content, filePath, }: {
-    content: string;
-    filePath: string;
-}): Promise<CompilationUnit>;

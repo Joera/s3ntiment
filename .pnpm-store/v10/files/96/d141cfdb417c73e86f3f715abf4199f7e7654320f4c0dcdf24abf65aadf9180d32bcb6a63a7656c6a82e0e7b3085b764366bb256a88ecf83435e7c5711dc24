@@ -1,1 +1,0 @@
-{"version":3,"file":"createRequestId.js","sourceRoot":"","sources":["../../../../../../../../packages/networks/src/networks/vNaga/shared/helpers/createRequestId.ts"],"names":[],"mappings":";;AAGA,0CAEC;AALD;;GAEG;AACH,SAAgB,eAAe;IAC7B,OAAO,OAAO,IAAI,CAAC,GAAG,EAAE,IAAI,IAAI,CAAC,MAAM,EAAE,CAAC,QAAQ,CAAC,EAAE,CAAC,CAAC,SAAS,CAAC,CAAC,EAAE,EAAE,CAAC,EAAE,CAAC;AAC5E,CAAC"}

@@ -1,8 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendNodeRequest = void 0;
-const tslib_1 = require("tslib");
-var sendNodeRequest_1 = require("./src/helper/sendNodeRequest");
-Object.defineProperty(exports, "sendNodeRequest", { enumerable: true, get: function () { return sendNodeRequest_1.sendNodeRequest; } });
-tslib_1.__exportStar(require("./src/handshake"), exports);
-//# sourceMappingURL=index.js.map

@@ -1,4 +1,0 @@
-import type { EqualityOptions } from './EqualityOptions.js';
-import type { CanonicalType } from './getCanonicalType.js';
-export declare function getKeys(value: object, type: CanonicalType, options: EqualityOptions): string[];
-//# sourceMappingURL=getKeys.d.ts.map

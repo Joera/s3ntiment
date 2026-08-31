@@ -1,7 +1,0 @@
-export declare function sendNodeRequest<T>(params: {
-    fullPath: string;
-    data: any;
-    requestId: string;
-    epoch: number;
-    version: string;
-}): Promise<T>;

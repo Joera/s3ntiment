@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.LitMessageSchema = void 0;
-var LitMessageSchema_1 = require("./LitMessageSchema");
-Object.defineProperty(exports, "LitMessageSchema", { enumerable: true, get: function () { return LitMessageSchema_1.LitMessageSchema; } });
-//# sourceMappingURL=index.js.map

@@ -1,3 +1,0 @@
-import type { FormatOptions } from './FormatOptions.js';
-export declare function formatUnknown(value: unknown, sibling: unknown, options: FormatOptions, valueStack: unknown[], siblingStack: unknown[]): [number, string][];
-//# sourceMappingURL=formatUnknown.d.ts.map

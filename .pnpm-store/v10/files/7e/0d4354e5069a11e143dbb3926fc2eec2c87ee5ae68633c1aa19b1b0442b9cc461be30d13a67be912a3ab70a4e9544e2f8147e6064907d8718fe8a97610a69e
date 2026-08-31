@@ -1,9 +1,0 @@
-import type { Control } from '../../Control.js';
-import { type MockFunction } from '../../mocks/index.js';
-export declare function assertIsMock(control: Control): asserts control is Control & {
-    actual: MockFunction<any[], any>;
-};
-export declare function formatTimes(times: number): string;
-export declare function formatCalledTimes(mock: MockFunction<any[], any>): string;
-export declare function compareArgs(control: Control, actual: unknown[], expected: unknown[]): void;
-//# sourceMappingURL=utils.d.ts.map

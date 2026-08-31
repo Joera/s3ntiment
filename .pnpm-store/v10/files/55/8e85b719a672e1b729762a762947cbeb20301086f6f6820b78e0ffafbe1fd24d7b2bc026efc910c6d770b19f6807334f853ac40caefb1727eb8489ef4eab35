@@ -1,1 +1,0 @@
-{"version":3,"file":"greaterThan.d.ts","sourceRoot":"","sources":["../../../../src/matchers/numbers/greaterThan.ts"],"names":[],"mappings":"AAEA,OAAO,QAAQ,iBAAiB,CAAC;IAC/B,UAAU,QAAQ;QAChB;;;;;;;;;;;;;;;;;;;;WAoBG;QACH,WAAW,CAAC,MAAM,EAAE,MAAM,GAAG,MAAM,GAAG,KAAK,CAAA;KAC5C;CACF;AAID,wBAAgB,WAAW,CAAC,MAAM,EAAE,MAAM,GAAG,MAAM,WAClC,OAAO,aAEvB"}

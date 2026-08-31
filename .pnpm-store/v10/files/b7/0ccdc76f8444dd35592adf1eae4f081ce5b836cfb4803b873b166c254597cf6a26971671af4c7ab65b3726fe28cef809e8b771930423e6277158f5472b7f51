@@ -1,8 +1,0 @@
-import { AuthServerTx } from '@lit-protocol/types';
-export declare const handleAuthServerRequest: <T>(params: {
-    serverUrl: string;
-    path: "/pkp/mint";
-    body: any;
-    jobName: string;
-    headers?: Record<string, string>;
-}) => Promise<AuthServerTx<T>>;

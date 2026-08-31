@@ -1,5 +1,0 @@
-import { StateVariableDefinition } from "@nomicfoundation/slang/ast";
-export declare function isPrivate(stateVariable: StateVariableDefinition): boolean;
-export declare function isConstant(stateVariable: StateVariableDefinition): boolean;
-export declare function isImmutable(stateVariable: StateVariableDefinition): boolean;
-export declare function hasDefaultVisibility(stateVariable: StateVariableDefinition): boolean;

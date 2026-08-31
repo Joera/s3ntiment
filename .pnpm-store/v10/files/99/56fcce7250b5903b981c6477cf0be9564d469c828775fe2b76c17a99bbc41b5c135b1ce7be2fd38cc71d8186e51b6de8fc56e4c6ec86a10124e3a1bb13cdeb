@@ -1,1 +1,0 @@
-{"version":3,"file":"lessThan.js","sourceRoot":"","sources":["../../../../src/matchers/numbers/lessThan.ts"],"names":[],"mappings":";;;AAAA,+CAAiD;AA6BjD,IAAA,2BAAe,EAAC,UAAU,EAAE,QAAQ,CAAC,CAAA;AAErC,SAAgB,QAAQ,CAAC,MAAuB;IAC9C,OAAO,CAAC,KAAc,EAAE,EAAE,CACxB,CAAC,OAAO,KAAK,KAAK,QAAQ,IAAI,OAAO,KAAK,KAAK,QAAQ,CAAC,IAAI,KAAK,GAAG,MAAM,CAAA;AAC9E,CAAC;AAHD,4BAGC"}

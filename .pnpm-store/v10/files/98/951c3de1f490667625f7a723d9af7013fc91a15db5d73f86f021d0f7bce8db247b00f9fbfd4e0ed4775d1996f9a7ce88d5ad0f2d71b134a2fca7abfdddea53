@@ -1,8 +1,0 @@
-import type { FormatOptions } from './FormatOptions.js';
-export declare const MULTILINE_DELIMITER = "\"\"\"";
-export declare function formatStringBlock({ value, options, valueStack, }: {
-    value: string;
-    options: FormatOptions;
-    valueStack: unknown[];
-}): [number, string][];
-//# sourceMappingURL=formatStringBlock.d.ts.map

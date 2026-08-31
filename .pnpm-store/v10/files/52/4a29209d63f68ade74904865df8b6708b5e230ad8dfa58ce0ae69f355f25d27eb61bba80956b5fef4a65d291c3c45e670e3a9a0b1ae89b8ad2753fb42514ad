@@ -1,4 +1,0 @@
-import { z } from 'zod';
-import { EncryptedVersion1Schema } from '@lit-protocol/schemas';
-export declare const walletEncrypt: (myWalletSecretKey: Uint8Array, theirWalletPublicKey: Uint8Array, message: Uint8Array) => z.infer<typeof EncryptedVersion1Schema>;
-export declare const walletDecrypt: (myWalletSecretKey: Uint8Array, data: z.infer<typeof EncryptedVersion1Schema>) => Uint8Array;

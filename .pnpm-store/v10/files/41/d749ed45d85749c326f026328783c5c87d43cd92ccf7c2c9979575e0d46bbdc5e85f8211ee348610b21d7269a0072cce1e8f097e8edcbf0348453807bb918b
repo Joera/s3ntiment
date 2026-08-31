@@ -1,4 +1,0 @@
-import { CustomConfig } from '@human.tech/waap-interface-core';
-export declare function isMetaMask(provider: any): boolean;
-export declare function isSafeTransaction(params?: unknown[] | object): boolean;
-export declare const defaultConfig: CustomConfig;

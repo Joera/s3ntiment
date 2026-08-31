@@ -1,3 +1,0 @@
-import type { FormatOptions } from './FormatOptions.js';
-export declare function formatNumber(value: number, sibling: unknown, options: FormatOptions): [number, string][];
-//# sourceMappingURL=formatNumber.d.ts.map

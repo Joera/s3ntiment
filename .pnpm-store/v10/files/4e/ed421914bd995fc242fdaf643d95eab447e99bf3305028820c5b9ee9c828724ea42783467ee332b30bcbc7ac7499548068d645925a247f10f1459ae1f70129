@@ -1,7 +1,0 @@
-export type IpfsCidV0 = `Qm${string}`;
-type SupportedInput = string | Uint8Array | ArrayBuffer | ArrayBufferView;
-/**
- * Generate a CIDv0 IPFS identifier for the provided content.
- */
-export declare const getIpfsId: (input: SupportedInput) => Promise<IpfsCidV0>;
-export {};

@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getIpfsId = void 0;
-var getIpfsId_1 = require("../src/ipfs/getIpfsId");
-Object.defineProperty(exports, "getIpfsId", { enumerable: true, get: function () { return getIpfsId_1.getIpfsId; } });
-//# sourceMappingURL=index.js.map

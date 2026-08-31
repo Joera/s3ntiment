@@ -1,3 +1,0 @@
-import type { EqualityOptions } from './EqualityOptions.js';
-export declare function isEqualMap(value: Map<unknown, unknown>, valueStack: unknown[], other: Map<unknown, unknown>, otherStack: unknown[], options: EqualityOptions): boolean;
-//# sourceMappingURL=isEqualMap.d.ts.map

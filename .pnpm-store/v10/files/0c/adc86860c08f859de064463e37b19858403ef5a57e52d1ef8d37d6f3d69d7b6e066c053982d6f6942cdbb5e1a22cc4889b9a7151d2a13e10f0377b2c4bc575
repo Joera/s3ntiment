@@ -1,8 +1,0 @@
-import type { HardhatPlugin } from 'hardhat/types/plugins';
-import './type-extensions.js';
-import type { Environment } from 'rocketh/types';
-import type { NetworkConnection } from 'hardhat/types/network';
-declare const hardhatPlugin: HardhatPlugin;
-export default hardhatPlugin;
-export declare function getHardhatConnection(env: Environment): NetworkConnection<'generic'>;
-//# sourceMappingURL=index.d.ts.map

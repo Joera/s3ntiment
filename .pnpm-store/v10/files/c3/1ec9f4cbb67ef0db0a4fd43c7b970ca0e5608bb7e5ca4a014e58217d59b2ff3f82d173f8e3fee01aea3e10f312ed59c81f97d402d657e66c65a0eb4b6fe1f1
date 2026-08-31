@@ -1,4 +1,0 @@
-export { isMockFn, mockFn } from './mockFn.js';
-export { mockObject } from './mockObject.js';
-export {} from './types/index.js';
-//# sourceMappingURL=index.js.map

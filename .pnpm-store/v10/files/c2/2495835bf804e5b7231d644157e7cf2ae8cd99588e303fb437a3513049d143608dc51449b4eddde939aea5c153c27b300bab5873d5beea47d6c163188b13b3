@@ -1,7 +1,0 @@
-/**
- * Sui Wallet Standard integration for WaaP.
- */
-export { WaaPSuiWallet } from './SuiWallet.js';
-export { initWaaPSui } from './init.js';
-export { registerWaaPSuiWallet } from './register.js';
-export type { SuiAccount, SuiChain, SuiConnectInput, SuiConnectOutput, SuiSignPersonalMessageInput, SuiSignPersonalMessageOutput, SuiSignTransactionInput, SuiSignTransactionOutput, SuiWalletChangeProperties, SuiWalletEventListener, WaaPSuiWalletInterface, WaaPSuiWalletFeatures, InitWaaPSuiOptions, WalletIcon } from './types.js';

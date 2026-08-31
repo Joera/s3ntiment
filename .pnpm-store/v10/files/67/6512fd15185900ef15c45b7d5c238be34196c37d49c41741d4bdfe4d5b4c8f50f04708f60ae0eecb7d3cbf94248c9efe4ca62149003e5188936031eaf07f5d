@@ -1,9 +1,0 @@
-import { DefaultNetworkConfig } from '../../../../../../../shared/interfaces/NetworkContext';
-import { ExpectedAccountOrWalletClient } from '../../../../../contract-manager/createContractsManager';
-/**
- * Get user withdraw delay from the Ledger contract
- * @param networkCtx - Network context for contract interactions
- * @param accountOrWalletClient - Account or wallet client for the transaction
- * @returns The withdraw delay in seconds as a bigint
- */
-export declare function getUserWithdrawDelay(networkCtx: DefaultNetworkConfig, accountOrWalletClient: ExpectedAccountOrWalletClient): Promise<bigint>;

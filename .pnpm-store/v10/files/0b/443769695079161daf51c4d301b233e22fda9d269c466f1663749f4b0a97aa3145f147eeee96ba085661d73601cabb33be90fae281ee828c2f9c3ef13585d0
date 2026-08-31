@@ -1,8 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createReadOnlyContractsManager = exports.createContractsManager = void 0;
-var createContractsManager_1 = require("./createContractsManager");
-Object.defineProperty(exports, "createContractsManager", { enumerable: true, get: function () { return createContractsManager_1.createContractsManager; } });
-var createContractsManager_2 = require("./createContractsManager");
-Object.defineProperty(exports, "createReadOnlyContractsManager", { enumerable: true, get: function () { return createContractsManager_2.createReadOnlyContractsManager; } });
-//# sourceMappingURL=index.js.map

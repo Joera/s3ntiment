@@ -1,8 +1,0 @@
-import type { LitAuthStorageProvider } from '../../storage';
-export declare function tryGetCachedDelegationAuthSig(params: {
-    storage: LitAuthStorageProvider;
-    address: string;
-    expiration: string;
-    signSessionKey: any;
-    cache?: boolean;
-}): Promise<any>;

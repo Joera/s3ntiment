@@ -1,1 +1,0 @@
-{"version":3,"file":"BaseProvider.js","sourceRoot":"","sources":["../../../src/environment/providers/BaseProvider.ts"],"names":[],"mappings":"AAEA,MAAM,OAAgB,YAAY;IACX;IAAtB,YAAsB,QAAsC;QAAtC,aAAQ,GAAR,QAAQ,CAA8B;IAAG,CAAC;IAEhE,OAAO,CAAC,IAAS;QAChB,OAAO,IAAI,CAAC,QAAQ,CAAC,IAAI,CAAC,CAAC;IAC5B,CAAC;CAKD"}

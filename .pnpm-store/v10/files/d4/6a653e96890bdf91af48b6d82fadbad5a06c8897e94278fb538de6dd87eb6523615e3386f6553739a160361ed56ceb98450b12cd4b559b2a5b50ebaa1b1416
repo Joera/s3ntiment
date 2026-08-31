@@ -1,9 +1,0 @@
-import { AuthData } from '@lit-protocol/schemas';
-import { AuthMethod, AuthSig } from '@lit-protocol/types';
-import { Account, Hex, PrivateKeyAccount } from 'viem';
-export declare class ViemAccountAuthenticator {
-    readonly type = "account";
-    static createAuthSig(account: Account, messageToSign: string): Promise<AuthSig>;
-    static authenticate(account: Account | PrivateKeyAccount, messageToSign?: string): Promise<AuthData>;
-    static authMethodId(authMethod: AuthMethod): Promise<Hex>;
-}

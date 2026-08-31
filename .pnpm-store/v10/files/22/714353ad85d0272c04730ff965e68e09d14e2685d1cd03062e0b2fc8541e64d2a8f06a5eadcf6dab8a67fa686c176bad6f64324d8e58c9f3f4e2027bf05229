@@ -1,8 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createRequestId = void 0;
-const createRequestId = () => {
-    return Math.random().toString(16).slice(2);
-};
-exports.createRequestId = createRequestId;
-//# sourceMappingURL=createRequestId.js.map

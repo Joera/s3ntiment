@@ -1,6 +1,0 @@
-import type { ZodType } from "zod";
-type UnwrapZodType<F> = F extends ZodType<infer T> ? T : never;
-type Predicate = (x: unknown) => boolean;
-type UnwrapConditionalUnionType<T extends ReadonlyArray<[Predicate, ZodType<any>]>> = ZodType<UnwrapZodType<T[number][1]>>;
-export declare const conditionalUnionType: <T extends ReadonlyArray<[Predicate, ZodType<any>]>>(cases: [...T], noMatchMessage: string) => UnwrapConditionalUnionType<T>;
-export {};

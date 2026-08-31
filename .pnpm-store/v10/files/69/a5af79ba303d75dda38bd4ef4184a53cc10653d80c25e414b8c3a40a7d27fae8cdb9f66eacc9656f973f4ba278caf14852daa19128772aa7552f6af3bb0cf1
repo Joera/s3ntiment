@@ -1,3 +1,0 @@
-import type { EqualityOptions } from './EqualityOptions.js';
-export declare function isEqualNumber(value: number, other: number, options: EqualityOptions): boolean;
-//# sourceMappingURL=isEqualNumber.d.ts.map

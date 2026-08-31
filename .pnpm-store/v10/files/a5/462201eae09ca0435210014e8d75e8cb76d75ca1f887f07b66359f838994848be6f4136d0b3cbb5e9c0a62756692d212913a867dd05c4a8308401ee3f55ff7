@@ -1,3 +1,0 @@
-import type { FormatOptions } from './FormatOptions.js';
-export declare function formatSetEntries(value: Set<unknown>, sibling: unknown, options: FormatOptions, valueStack: unknown[], siblingStack: unknown[]): [number, string][];
-//# sourceMappingURL=formatSetEntries.d.ts.map

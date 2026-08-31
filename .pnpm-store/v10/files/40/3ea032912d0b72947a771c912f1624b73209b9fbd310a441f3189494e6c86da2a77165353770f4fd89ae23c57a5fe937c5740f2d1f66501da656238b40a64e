@@ -1,8 +1,0 @@
-/**
- * Polyfills for Node.js environment compatibility
- * This module ensures that browser APIs like atob, btoa, Buffer, and crypto
- * are available in Node.js environments where they might be missing.
- */
-declare function ensureGlobals(): void;
-
-export { ensureGlobals };

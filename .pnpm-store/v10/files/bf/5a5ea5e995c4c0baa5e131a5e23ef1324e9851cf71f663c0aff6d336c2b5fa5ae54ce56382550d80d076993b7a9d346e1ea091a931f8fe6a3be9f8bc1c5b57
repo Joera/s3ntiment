@@ -1,9 +1,0 @@
-import * as z from "zod";
-import { RuleDefinition } from "./types.js";
-declare const ConfigSchema: z.ZodDefault<z.ZodEnum<{
-    never: "never";
-    always: "always";
-}>>;
-type Config = z.infer<typeof ConfigSchema>;
-export declare const ExplicitTypes: RuleDefinition<Config>;
-export {};

@@ -1,7 +1,0 @@
-import { PKPSignEndpointResponse, PKPSignEndpointSharesParsed } from '../types';
-/**
- * Parses the PKP sign response data and transforms it into a standardised format because the raw response contains snake cases and double quotes.
- * @param responseData - The response data containing PKP sign shares.
- * @returns An array of objects with the signature data.
- */
-export declare const parsePkpSignResponse: (responseData: PKPSignEndpointResponse[]) => PKPSignEndpointSharesParsed[];

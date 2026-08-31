@@ -1,4 +1,0 @@
-/**
- * Creates a unique request ID for tracking requests
- */
-export declare function createRequestId(): string;

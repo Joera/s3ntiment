@@ -1,6 +1,0 @@
-import type { ExecuteJsValueResponse, LitActionPaymentDetail } from '../types';
-/**
- * Sum payment details across multiple node responses.
- * Aggregates by component, summing quantity and price.
- */
-export declare const _sumPaymentDetails: (responses: ExecuteJsValueResponse[]) => LitActionPaymentDetail[] | undefined;

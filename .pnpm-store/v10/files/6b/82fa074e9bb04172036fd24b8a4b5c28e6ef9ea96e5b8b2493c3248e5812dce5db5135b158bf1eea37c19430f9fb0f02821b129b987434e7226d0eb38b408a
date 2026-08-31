@@ -1,5 +1,0 @@
-HELLO=bonjour
-WORLD=$HELLO
-MODE_ENV=DEPLOYMENT_CONTEXT
-# RPC_URL=locl45
-RPC_URL_localhost=lsakdlsakdlkdlk

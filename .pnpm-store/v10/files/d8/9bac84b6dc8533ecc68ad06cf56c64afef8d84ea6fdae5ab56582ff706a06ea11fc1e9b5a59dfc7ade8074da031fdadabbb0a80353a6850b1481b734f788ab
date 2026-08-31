@@ -1,3 +1,0 @@
-import { Fix } from "../rules/types.js";
-export declare function getAppliableFixes(fixes: Fix[]): Fix[];
-export declare function changeOverlaps(changeA: [number, number], changeB: [number, number]): boolean;

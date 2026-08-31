@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DecryptInputSchema = void 0;
-const schemas_1 = require("@lit-protocol/schemas");
-exports.DecryptInputSchema = schemas_1.DecryptRequestSchema;
-//# sourceMappingURL=decrypt.InputSchema.js.map

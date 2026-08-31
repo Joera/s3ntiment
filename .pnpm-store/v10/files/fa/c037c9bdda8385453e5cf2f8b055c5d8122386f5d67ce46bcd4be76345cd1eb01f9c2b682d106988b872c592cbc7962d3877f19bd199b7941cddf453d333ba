@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.nagaTest = void 0;
-var naga_test_module_1 = require("../networks/vNaga/envs/naga-test/naga-test.module");
-Object.defineProperty(exports, "nagaTest", { enumerable: true, get: function () { return naga_test_module_1.nagaTest; } });
-//# sourceMappingURL=naga-test.js.map

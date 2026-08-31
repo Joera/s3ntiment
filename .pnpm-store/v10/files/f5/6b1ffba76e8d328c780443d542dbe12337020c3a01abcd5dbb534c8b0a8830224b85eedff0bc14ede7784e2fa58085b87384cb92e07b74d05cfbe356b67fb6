@@ -1,1 +1,0 @@
-{"version":3,"file":"lessThan.d.ts","sourceRoot":"","sources":["../../../../src/matchers/numbers/lessThan.ts"],"names":[],"mappings":"AAEA,OAAO,QAAQ,iBAAiB,CAAC;IAC/B,UAAU,QAAQ;QAChB;;;;;;;;;;;;;;;;;;;;WAoBG;QACH,QAAQ,CAAC,MAAM,EAAE,MAAM,GAAG,MAAM,GAAG,KAAK,CAAA;KACzC;CACF;AAID,wBAAgB,QAAQ,CAAC,MAAM,EAAE,MAAM,GAAG,MAAM,WAC/B,OAAO,aAEvB"}

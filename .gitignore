@@ -10,3 +10,5 @@ logs
 # Runtime PKP pool-key artifacts (public keys fetched at runtime; do not commit)
 **/.data/pool-keys/*.json
 .s3n-orchestrator
+.public.pi-lens
+.pnpm-store

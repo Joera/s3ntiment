@@ -1,1 +1,0 @@
-{"version":3,"file":"EqualityOptions.js","sourceRoot":"","sources":["../../../src/isEqual/EqualityOptions.ts"],"names":[],"mappings":";;;AAmBa,QAAA,wBAAwB,GAAoB;IACvD,UAAU,EAAE,KAAK;IACjB,SAAS,EAAE,KAAK;IAChB,gBAAgB,EAAE,KAAK;IACvB,iBAAiB,EAAE,KAAK;CACzB,CAAA;AAEY,QAAA,sBAAsB,GAAoB;IACrD,GAAG,gCAAwB;IAC3B,gBAAgB,EAAE,IAAI;CACvB,CAAA"}

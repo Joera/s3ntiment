@@ -1,3 +1,0 @@
-import * as z from "zod";
-export const SeveritySchema = z.enum(["off", "warn", "error"]);
-//# sourceMappingURL=types.js.map

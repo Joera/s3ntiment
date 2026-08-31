@@ -1,5 +1,0 @@
-import { DefaultNetworkConfig } from '../../../../../../../shared/interfaces/NetworkContext';
-import type { ExpectedAccountOrWalletClient } from '../../../../../contract-manager/createContractsManager';
-import { PKPData } from '../../../../schemas/shared/PKPDataSchema';
-import { LitTxRes } from '../../../types';
-export declare function mintNext(_: any, networkCtx: DefaultNetworkConfig, accountOrWalletClient: ExpectedAccountOrWalletClient): Promise<LitTxRes<PKPData>>;

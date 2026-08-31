@@ -1,4 +1,0 @@
-import type { EqualityOptions } from './EqualityOptions.js';
-import type { CanonicalType } from './getCanonicalType.js';
-export declare function isEqualObject(value: object, valueStack: unknown[], other: object, otherStack: unknown[], options: EqualityOptions, type: CanonicalType): boolean;
-//# sourceMappingURL=isEqualObject.d.ts.map

@@ -1,6 +1,0 @@
-type Config = {
-    foldersOrFiles?: string[];
-};
-declare function copyDefaults(config: Config): Promise<void>;
-
-export { Config, copyDefaults };

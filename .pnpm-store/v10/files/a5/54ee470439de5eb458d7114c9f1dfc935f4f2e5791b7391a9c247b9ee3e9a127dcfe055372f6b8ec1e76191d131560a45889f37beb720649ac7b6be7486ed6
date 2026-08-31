@@ -1,3 +1,0 @@
-# silk-interface-core
-
-This package contains the types used by the Silk wallet. These types are at the interface level. They are used by both the wallet SDK and any app or package that uses the SDK.

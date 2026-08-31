@@ -1,3 +1,0 @@
-import type { EqualityOptions } from './EqualityOptions.js';
-export declare function isEqualUnknown(value: unknown, valueStack: unknown[], other: unknown, otherStack: unknown[], options: EqualityOptions): boolean;
-//# sourceMappingURL=isEqualUnknown.d.ts.map

@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.nagaStaging = void 0;
-var naga_staging_module_1 = require("./naga-staging.module");
-Object.defineProperty(exports, "nagaStaging", { enumerable: true, get: function () { return naga_staging_module_1.nagaStaging; } });
-//# sourceMappingURL=index.js.map

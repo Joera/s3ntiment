@@ -1,9 +1,0 @@
-"use strict";
-/**
- * Types for async transaction signing feature.
- *
- * Async signing allows the wallet modal to close immediately after user confirmation,
- * with signing happening in the background. Events are emitted to notify the consuming
- * app of progress. Keeping track is also possible through the useWaapTransaction hook.
- */
-Object.defineProperty(exports, "__esModule", { value: true });

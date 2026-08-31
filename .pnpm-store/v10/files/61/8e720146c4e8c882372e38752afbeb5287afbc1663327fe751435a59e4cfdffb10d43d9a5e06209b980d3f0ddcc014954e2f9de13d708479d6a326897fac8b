@@ -1,5 +1,0 @@
-import { DefaultNetworkConfig } from '../../../../../../shared/interfaces/NetworkContext';
-import { ExpectedAccountOrWalletClient } from '../../../../contract-manager/createContractsManager';
-import { PKPData } from '../../../schemas/shared/PKPDataSchema';
-import { LitTxRes } from '../../types';
-export declare const mintWithEoa: (request: any, networkConfig: DefaultNetworkConfig, accountOrWalletClient: ExpectedAccountOrWalletClient) => Promise<LitTxRes<PKPData>>;

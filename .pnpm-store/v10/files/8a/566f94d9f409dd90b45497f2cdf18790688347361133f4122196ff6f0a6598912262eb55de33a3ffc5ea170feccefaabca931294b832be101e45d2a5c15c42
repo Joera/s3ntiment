@@ -1,9 +1,0 @@
-import {
-  defineProperties,
-  defineProperty
-} from "./chunk-6GA5PVY7.mjs";
-import "./chunk-7P6ASYW6.mjs";
-export {
-  defineProperties,
-  defineProperty
-};

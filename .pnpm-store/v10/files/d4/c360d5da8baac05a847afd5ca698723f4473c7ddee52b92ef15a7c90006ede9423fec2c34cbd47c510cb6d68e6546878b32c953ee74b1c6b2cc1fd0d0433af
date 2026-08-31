@@ -1,9 +1,0 @@
-import { DiagnosticToReport } from "./rules/types.js";
-export interface Colorizer {
-    yellow: (text: string) => string;
-    red: (text: string) => string;
-    dim: (text: string) => string;
-    underline: (text: string) => string;
-    bold: (text: string) => string;
-}
-export declare function formatAndPrintDiagnostics(diagnostics: DiagnosticToReport[], sourceIdToAbsolutePath: Record<string, string>, consoleLog?: (...args: string[]) => void, colorizer?: Colorizer): void;

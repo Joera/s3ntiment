@@ -1,9 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.localStorage = void 0;
-const tslib_1 = require("tslib");
-const localStorage_1 = require("./localStorage");
-Object.defineProperty(exports, "localStorage", { enumerable: true, get: function () { return localStorage_1.localStorage; } });
-tslib_1.__exportStar(require("./localStorageNode"), exports);
-tslib_1.__exportStar(require("./types"), exports);
-//# sourceMappingURL=index.js.map

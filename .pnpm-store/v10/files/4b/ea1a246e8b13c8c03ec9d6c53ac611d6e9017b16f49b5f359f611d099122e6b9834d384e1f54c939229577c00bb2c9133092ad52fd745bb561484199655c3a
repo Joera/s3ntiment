@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.nagaLocal = void 0;
-var naga_local_module_1 = require("./naga-local.module");
-Object.defineProperty(exports, "nagaLocal", { enumerable: true, get: function () { return naga_local_module_1.nagaLocal; } });
-//# sourceMappingURL=index.js.map

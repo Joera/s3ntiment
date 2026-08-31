@@ -1,8 +1,0 @@
-import { z } from 'zod';
-export declare const toBigInt: z.ZodEffects<z.ZodUnion<[z.ZodString, z.ZodNumber]>, bigint, string | number>;
-export declare const toBigIntArray: z.ZodUnion<[z.ZodString, z.ZodNumber, z.ZodBigInt, z.ZodArray<z.ZodUnion<[z.ZodString, z.ZodNumber, z.ZodBigInt]>, "many">]>;
-export declare const toHexString: z.ZodEffects<z.ZodString, `0x${string}`, string>;
-export declare const toHexStringArray: z.ZodEffects<z.ZodUnion<[z.ZodString, z.ZodArray<z.ZodString, "many">, z.ZodUndefined]>, `0x${string}`[], string | string[] | undefined>;
-export declare const toBigIntMatrix: z.ZodEffects<z.ZodUnion<[z.ZodArray<z.ZodArray<z.ZodUnion<[z.ZodString, z.ZodNumber, z.ZodBigInt]>, "many">, "many">, z.ZodUndefined]>, bigint[][], (string | number | bigint)[][] | undefined>;
-export declare const toBoolean: z.ZodEffects<z.ZodUnion<[z.ZodBoolean, z.ZodUndefined]>, boolean, boolean | undefined>;
-export declare const toNumber: z.ZodEffects<z.ZodUnion<[z.ZodBigInt, z.ZodNumber, z.ZodString]>, number, string | number | bigint>;

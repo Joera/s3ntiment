@@ -450,13 +450,7 @@ already-member/self-rotation guards — cosmetically strict, not exploitable).
 `registerInPool` (card/nullifier-bound) could not provide. nilDB `E → S` record migration remains OUT
 of contract scope (separate off-chain half of the rotate, required in the frontend PR per RFC §6).
 
-**NEXT/IN-FLIGHT (2026-08-30): frontend `/account` PR** — results CTA gated on `anchor_address === undefined`,
-`/account` route + AccountController (replaces `/secure`), humanWallet.factory key-return refactor, secure
-flow (derive S → `rotateMember` → nilDB E→S migrate → wipe `bootstrapE` → persist S + `anchor_address`),
-Case-2 recover/re-assign, storage helpers, tests. **PR #24 (rotateMember) IS merged** — the first-time
-S-registration gap flagged in the Task 2 explore (which predated rotateMember) is resolved by rotateMember.
-Queued after this: the nilDB-side actual-respondent count (RFC §7.1) and the user's remaining railgun/nihilium
-option definitions.
+**NEXT/IN-FLIGHT (2026-08-30): frontend `/account` PR **DONE — READY FOR HUMAN MERGE.** **PR #26 (`deepseek/account-route`, HEAD `bed817e6b`)**: +953 → fixed to close 3 BLOCKING safety defects found in independent review. Results CTA gated on `anchor_address === undefined`, `/account` root + AccountController, humanWallet.factory key-return refactor, storage helpers, secure flow = **derive S → nilDB E→S migrate (recreate-then-delete) → rotateMember via Pimlico → on FULL success wipe bootstrapE + persist S + set anchor_address**; on ANY failure keep E, no wipe, no anchor. Railgun/nihilium stubbed. Gates independently verified green at HEAD: shared tsc 0 errors, frontend vitest **127 passing (13 files)**, vite build green. Reviews: `brain/reviews/account-route-pr26-review-2026-08-30.md` (1st, 3 blocking) + `brain/reviews/account-route-pr26-rereview-2026-08-30.md` (V2, all resolved, READY-TO-MERGE, no regressions). **PR #25 (getPoolMemberCount) still OPEN awaiting user merge.** Queued after: nilDB-side actual-respondent count (RFC §7.1) + user's railgun/nihilium option definitions.
 =======
 ## 9.5 — Per-pool registered-member count (2026-08-30)
 

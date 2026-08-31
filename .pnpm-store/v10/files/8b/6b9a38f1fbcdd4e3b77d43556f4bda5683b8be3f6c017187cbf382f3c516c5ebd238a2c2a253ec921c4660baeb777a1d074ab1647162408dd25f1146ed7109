@@ -1,6 +1,0 @@
-import { DefaultNetworkConfig } from '../../../../../../../shared/interfaces/NetworkContext';
-import { ExpectedAccountOrWalletClient } from '../../../../../contract-manager/createContractsManager';
-import { ClaimAndMintRaw } from '../../../../schemas/ClaimAndMintSchema';
-import { PKPData } from '../../../../schemas/shared/PKPDataSchema';
-import { LitTxRes } from '../../../types';
-export declare function claimAndMint(request: ClaimAndMintRaw, networkCtx: DefaultNetworkConfig, accountOrWalletClient: ExpectedAccountOrWalletClient): Promise<LitTxRes<PKPData>>;

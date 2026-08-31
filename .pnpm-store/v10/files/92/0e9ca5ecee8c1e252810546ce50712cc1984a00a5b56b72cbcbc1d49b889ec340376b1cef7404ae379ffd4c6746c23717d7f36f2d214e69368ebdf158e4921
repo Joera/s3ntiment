@@ -1,1 +1,0 @@
-{"version":3,"file":"satisfies.d.ts","sourceRoot":"","sources":["../../../../src/matchers/custom/satisfies.ts"],"names":[],"mappings":"AAEA,OAAO,QAAQ,iBAAiB,CAAC;IAC/B,UAAU,QAAQ;QAChB;;;;;;;;;;;;;;;;;;;;;WAqBG;QACH,SAAS,CAAC,SAAS,EAAE,CAAC,KAAK,EAAE,OAAO,KAAK,OAAO,GAAG,KAAK,CAAA;KACzD;CACF;AAID,wBAAgB,SAAS,CAAC,SAAS,EAAE,CAAC,KAAK,EAAE,OAAO,KAAK,OAAO,WAC/C,OAAO,aACvB"}

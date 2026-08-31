@@ -1,5 +1,0 @@
-import type { ExpectedAccountOrWalletClient } from '../../../shared/managers/contract-manager/createContractsManager';
-import { CreateChainManagerReturn } from '../../../shared/factories/BaseChainManagerFactory';
-export type { CreateChainManagerReturn };
-export declare const createChainManager: (accountOrWalletClient: ExpectedAccountOrWalletClient) => CreateChainManagerReturn;
-export declare const createReadOnlyChainManager: () => CreateChainManagerReturn;

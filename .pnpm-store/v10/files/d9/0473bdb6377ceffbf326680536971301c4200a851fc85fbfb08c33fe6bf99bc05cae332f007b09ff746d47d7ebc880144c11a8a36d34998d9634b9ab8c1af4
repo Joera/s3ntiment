@@ -1,9 +1,0 @@
-/**
- * Convert a public key to a token ID
- * @param pubkey - The public key to convert
- * @returns The token ID
- *
- * NOTE: code converted from:
- * https://github.com/LIT-Protocol/lit-assets/blob/167d6908acc09c0aebdb6909f703b83921da4400/rust/lit-node/lit-node/src/utils/web.rs#L788-L802
- */
-export declare function pubkeyToTokenId(pubkey: string): bigint;

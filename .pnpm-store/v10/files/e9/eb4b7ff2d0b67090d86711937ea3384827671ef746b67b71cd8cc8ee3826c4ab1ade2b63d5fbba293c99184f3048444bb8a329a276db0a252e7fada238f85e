@@ -1,9 +1,0 @@
-import { type CanonicalType } from '../isEqual/getCanonicalType.js';
-export declare function getComparedTypeName(value: unknown, sibling: unknown, type: CanonicalType, ignorePrototypes: boolean): {
-    typeName: string | undefined;
-    isDifferentPrototype: boolean;
-    isSameTypeName: boolean;
-};
-export declare function getTypeName(value: unknown, ignorePrototypes: boolean): string | undefined;
-export declare function getFunctionTypeName(value: Function): string;
-//# sourceMappingURL=getComparedTypeName.d.ts.map

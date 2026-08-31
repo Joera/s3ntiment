@@ -1,9 +1,0 @@
-/**
- *
- * Find the element that occurs the most in an array
- *
- * @template T
- * @param { T[] } arr
- * @returns { T } the element that appeared the most
- */
-export declare const mostCommonValue: <T>(arr: T[]) => T | undefined;

@@ -1,6 +1,0 @@
-import { RuleDefinition } from "./types.js";
-import * as z from "zod";
-declare const Schema: z.ZodDefault<z.ZodArray<z.ZodString>>;
-type Config = z.infer<typeof Schema>;
-export declare const IdDenylist: RuleDefinition<Config>;
-export {};

@@ -1,5 +1,0 @@
-import { type FormatOptions } from '../../format/FormatOptions.js';
-export declare const SNAPSHOT_FORMAT_OPTIONS: FormatOptions;
-export declare function formatSnapshot(snapshot: Record<string, string>): string;
-export declare function parseSnapshot(snapshot: string): Record<string, string>;
-//# sourceMappingURL=format.d.ts.map

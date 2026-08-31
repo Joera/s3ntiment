@@ -1,3 +1,0 @@
-import type { FormatOptions } from './FormatOptions.js';
-export declare function formatString(value: string, options: FormatOptions): string;
-//# sourceMappingURL=formatString.d.ts.map

@@ -1,6 +1,0 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.nagaDev = void 0;
-var naga_dev_module_1 = require("../networks/vNaga/envs/naga-dev/naga-dev.module");
-Object.defineProperty(exports, "nagaDev", { enumerable: true, get: function () { return naga_dev_module_1.nagaDev; } });
-//# sourceMappingURL=naga-dev.js.map

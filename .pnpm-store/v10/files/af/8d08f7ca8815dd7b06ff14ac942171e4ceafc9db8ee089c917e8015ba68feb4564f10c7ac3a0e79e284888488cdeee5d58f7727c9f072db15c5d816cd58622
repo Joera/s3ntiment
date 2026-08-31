@@ -1,3 +1,0 @@
-export declare function findUp(fileName: string, from: string): Promise<string | undefined>;
-export declare function exists(absolutePath: string): Promise<boolean>;
-export declare function isDirectory(absolutePath: string): Promise<boolean>;

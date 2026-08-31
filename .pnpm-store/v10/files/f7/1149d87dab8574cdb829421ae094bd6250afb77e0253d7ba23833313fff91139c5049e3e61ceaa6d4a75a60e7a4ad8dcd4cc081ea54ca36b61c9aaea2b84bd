@@ -1,4 +1,0 @@
-import type { CanonicalType } from '../isEqual/getCanonicalType.js';
-import type { FormatOptions } from './FormatOptions.js';
-export declare function getRepresentation(value: unknown, type: CanonicalType, options: FormatOptions): string | undefined;
-//# sourceMappingURL=getRepresentation.d.ts.map

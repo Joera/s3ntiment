@@ -1,6 +1,0 @@
-import { Query } from "@nomicfoundation/slang/cst";
-export function matchesQuery(cursor, query) {
-    const matches = [...cursor.query([Query.create(query)])];
-    return matches.length > 0;
-}
-//# sourceMappingURL=queries.js.map

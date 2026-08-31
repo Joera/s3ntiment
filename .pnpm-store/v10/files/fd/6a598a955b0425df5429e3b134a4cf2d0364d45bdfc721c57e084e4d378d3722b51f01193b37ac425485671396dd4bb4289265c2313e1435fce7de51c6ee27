@@ -1,5 +1,0 @@
-/**
- * Create a random hex string for use as an attestation challenge
- * @returns { string }
- */
-export declare const createRandomHexString: (size: number) => string;

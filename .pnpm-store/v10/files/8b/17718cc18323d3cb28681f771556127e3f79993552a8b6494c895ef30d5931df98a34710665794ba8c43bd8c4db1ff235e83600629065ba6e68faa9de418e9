@@ -1,3 +1,0 @@
-import type { FormatOptions } from './FormatOptions.js';
-export declare function getOptionsWith(options: FormatOptions, updates: Partial<FormatOptions>): FormatOptions;
-//# sourceMappingURL=getOptionsWith.d.ts.map

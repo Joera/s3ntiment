@@ -1,1 +1,0 @@
-{"version":3,"file":"regex.d.ts","sourceRoot":"","sources":["../../../../src/matchers/basic/regex.ts"],"names":[],"mappings":"AAEA,OAAO,QAAQ,iBAAiB,CAAC;IAC/B,UAAU,QAAQ;QAChB;;;;;;;;;;;;;;;;;WAiBG;QACH,KAAK,CAAC,KAAK,EAAE,MAAM,GAAG,KAAK,CAAA;KAC5B;CACF;AAID,wBAAgB,KAAK,CAAC,KAAK,EAAE,MAAM,WAClB,OAAO,aAMvB"}

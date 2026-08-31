@@ -1,5 +1,0 @@
-import type { Account, WalletClient } from 'viem';
-import { INetworkConfig } from '../../interfaces/NetworkContext';
-export type ExpectedAccountOrWalletClient = Account | WalletClient;
-export declare const createReadOnlyContractsManager: <T, M>(networkConfig: INetworkConfig<T, M>) => any;
-export declare const createContractsManager: <T, M>(networkConfig: INetworkConfig<T, M>, accountOrWalletClient: ExpectedAccountOrWalletClient) => any;

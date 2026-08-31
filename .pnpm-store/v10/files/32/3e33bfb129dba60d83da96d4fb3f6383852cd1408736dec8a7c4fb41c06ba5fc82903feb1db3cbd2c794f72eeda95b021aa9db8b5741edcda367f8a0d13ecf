@@ -1,8 +1,0 @@
-import { RuleDefinitionWithConfig } from "./types.js";
-import * as z from "zod";
-declare const Schema: z.ZodDefault<z.ZodObject<{
-    ignorePattern: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>>;
-type Config = z.infer<typeof Schema>;
-export declare const NoUnusedVars: RuleDefinitionWithConfig<Config>;
-export {};

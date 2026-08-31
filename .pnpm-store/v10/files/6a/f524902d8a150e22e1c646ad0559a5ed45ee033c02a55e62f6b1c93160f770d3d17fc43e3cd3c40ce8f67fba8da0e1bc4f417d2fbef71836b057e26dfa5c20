@@ -1,7 +1,0 @@
-import {
-  copyDefaults
-} from "./chunk-M44AETFG.js";
-export {
-  copyDefaults
-};
-//# sourceMappingURL=index.js.map

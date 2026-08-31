@@ -1,1 +1,0 @@
-{"version":3,"file":"greaterThan.js","sourceRoot":"","sources":["../../../../src/matchers/numbers/greaterThan.ts"],"names":[],"mappings":";;;AAAA,+CAAiD;AA6BjD,IAAA,2BAAe,EAAC,aAAa,EAAE,WAAW,CAAC,CAAA;AAE3C,SAAgB,WAAW,CAAC,MAAuB;IACjD,OAAO,CAAC,KAAc,EAAE,EAAE,CACxB,CAAC,OAAO,KAAK,KAAK,QAAQ,IAAI,OAAO,KAAK,KAAK,QAAQ,CAAC,IAAI,KAAK,GAAG,MAAM,CAAA;AAC9E,CAAC;AAHD,kCAGC"}

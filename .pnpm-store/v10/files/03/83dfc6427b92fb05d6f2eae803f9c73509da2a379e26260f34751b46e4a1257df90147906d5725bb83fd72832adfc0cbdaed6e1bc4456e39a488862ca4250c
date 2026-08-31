@@ -1,1 +1,0 @@
-{"version":3,"file":"length.d.ts","sourceRoot":"","sources":["../../../../src/matchers/objects/length.ts"],"names":[],"mappings":"AAGA,OAAO,QAAQ,iBAAiB,CAAC;IAC/B,UAAU,QAAQ;QAChB;;;;;;;;;;;;;;;;;;;WAmBG;QACH,MAAM,CAAC,MAAM,EAAE,MAAM,GAAG,KAAK,CAAA;KAC9B;CACF;AAID,wBAAgB,MAAM,CAAC,MAAM,EAAE,MAAM,WACpB,OAAO,aAOvB"}

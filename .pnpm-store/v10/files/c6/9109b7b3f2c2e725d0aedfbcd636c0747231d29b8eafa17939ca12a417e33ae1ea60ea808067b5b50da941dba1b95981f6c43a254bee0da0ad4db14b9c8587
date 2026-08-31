@@ -1,1 +1,0 @@
-{"version":3,"file":"formatMapEntries.d.ts","sourceRoot":"","sources":["../../../src/format/formatMapEntries.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,oBAAoB,CAAA;AAIvD,wBAAgB,gBAAgB,CAC9B,KAAK,EAAE,GAAG,CAAC,OAAO,EAAE,OAAO,CAAC,EAC5B,OAAO,EAAE,OAAO,EAChB,OAAO,EAAE,aAAa,EACtB,UAAU,EAAE,OAAO,EAAE,EACrB,YAAY,EAAE,OAAO,EAAE,sBAqExB"}

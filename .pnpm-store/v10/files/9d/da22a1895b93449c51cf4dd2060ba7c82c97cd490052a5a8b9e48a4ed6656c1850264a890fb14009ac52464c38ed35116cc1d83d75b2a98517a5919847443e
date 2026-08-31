@@ -1,3 +1,0 @@
-import { LitResourceAbilityRequest } from '@lit-protocol/types';
-import { ShorthandResources } from '../../authenticators/types';
-export declare const processResources: (resources: ShorthandResources) => LitResourceAbilityRequest[];
