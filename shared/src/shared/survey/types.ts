@@ -75,7 +75,7 @@ export interface EncryptedData {
 export interface EncryptedConfig {
     surveyId: string
     poolId: string,
-    nilDid: string, // surveyOwnerDid.didString,
+    nilDid: string, // builderDid.didString (nilDB record owner is the PKP DID via ACL, not the survey owner)
     encryptedForOwner: EncryptedData
     encryptedForRespondent: EncryptedData
     encryptedScoring: string

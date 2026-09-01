@@ -130,13 +130,19 @@ export class SurveyController {
       // replace with pool issued lit action 
       const signature = await this.services.account.signMessage(`s3ntiment:submit`);
 
+      // GAP-19: the backend delegation route consumes a `poolConfig` object
+      // (poolConfig.safe / poolConfig.pkpId / poolConfig.pkpDid) — see
+      // nillcc-backend/src/main.ts POST /surveys/:surveyId/delegation. Sending
+      // flat pkpId/pkpDid previously left `safe` undefined and made the handler
+      // throw (NillionPkpClient.getUserWriteDelegation requires poolConfig.safe
+      // for the owner-invocation action). Send the full pool config so the
+      // handler derives a delegation `storeOwned` can use.
       const args = {
         userDid: this.services.nillDB.userDidString, 
         signature, 
         userAddress: this.services.account.getSignerAddress(),
         poolId: this.survey?.pool, 
-        pkpId: this.poolConfig?.pkpId, 
-        pkpDid: this.poolConfig?.pkpDid 
+        poolConfig: this.poolConfig,
       }
 
       const { delegation } = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/delegation`, {

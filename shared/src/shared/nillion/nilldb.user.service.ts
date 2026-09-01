@@ -9,7 +9,6 @@ import {
 } from '@nillion/secretvaults';
 import { PoolConfig, Survey, SurveyAnswer } from '../survey/types.js';
 import { createUserDataObject } from '../survey/index.js';
-import { Signature } from 'viem';
 import { StringifyOptions } from 'node:querystring';
 
 
@@ -40,20 +39,6 @@ export class NillDBUserService {
             },
         });
 
-    }
-
-    async storeStandard(backendUrl: string, surveyId: string, poolId: string, userData: any, signature: Signature | `0x${string}`, signer: string) {
-        return await fetch(`${backendUrl}/api/surveys/${surveyId}/submit`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                surveyId,
-                poolId,
-                userData,
-                signature,
-                signer
-            })
-        });
     }
 
     async storeOwned(uuid: string, survey: Survey, poolConfig: PoolConfig, answers: any, surveyId: string, delegation: string) {

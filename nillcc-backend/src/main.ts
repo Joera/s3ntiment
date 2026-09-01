@@ -124,47 +124,6 @@ router.put('/surveys/:id', async (req: Request, res: Response) => {
 
 // Submit survey answers
 // Body: { userData, signature, signer }
-// router.post('/surveys/:id/submit', async (req: Request, res: Response) => {
-//     try {
-//         const { userData, signature, signer, poolId } = req.body;
-//         const surveyId = req.params.id;
-
-//         const isValidSignature = await verifyMessage({
-//             message: `s3ntiment:submit:${surveyId}`,
-//             signature,
-//             address: signer
-//         });
-
-//         const isPoolMember = await viem.read(
-//             surveyStore.address as `0x${string}`,
-//             surveyStore.abi,
-//             'isPoolMember',
-//             [poolId, signer]
-//         );
-
-//         if (!isValidSignature || !isPoolMember) {
-//             console.log("ERROR", {
-//                 isValidSignature, 
-//                 isPoolMember, 
-//                 userData, 
-//                 signature, 
-//                 signer, 
-//                 poolId,
-//                 surveyId
-//             })
-//             res.status(403).json({ error: 'UNAUTHORIZED', isValidSignature, isPoolMember });
-//             return;
-//         }
-
-//         await nildb.submitResponseForUser(surveyId, userData);
-//         res.json({ success: true });
-
-//     } catch (error: any) {
-//         console.error(error);
-//         res.status(500).json({ error: 'SUBMIT_FAILED', detail: error.message });
-//     }
-// });
-
 // Score a submission (separate roundtrip, fires after submit when applicable)
 // Body: { signature, signer }
 router.post('/surveys/:id/score', async (req: Request, res: Response) => {
@@ -215,7 +174,6 @@ router.post('/surveys/:id/results', async (req: Request, res: Response) => {
 
         console.log(results)
 
-        //const results = await nildb.findSurveyResults(req.params.id, groups, "");
         res.json({ results });
     } catch (error: any) {
         console.error(error);
