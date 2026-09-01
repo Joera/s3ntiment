@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+.git
+**/.git
+**/output
+**/package-lock.json
+logs
+cards
+node
+worktrees
+.pnpm-store
+.public.pi-lens
+.s3n-orchestrator
+**/.data/pool-keys/*.json
