@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@holonym-foundation/mishtiwasm": "^0.3.2",
-    "@human.tech/waap-sdk": "^1.2.0",
+    "@human.tech/waap-sdk": "^2.3.0",
     "@lit-protocol/auth": "^8.2.2",
     "@lit-protocol/lit-client": "^8.3.0",
     "@lit-protocol/networks": "^8.4.0",
