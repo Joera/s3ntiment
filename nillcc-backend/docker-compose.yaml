@@ -1,8 +1,11 @@
 services:
   api:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # Build from the repo ROOT so the workspace sibling packages
+      # (../contracts, ../shared) are available as `file:` deps and
+      # contracts/dist can be produced inside the image.
+      context: ..
+      dockerfile: nillcc-backend/Dockerfile
     container_name: s3ntiment
     ports:
       - "8088:8080"
