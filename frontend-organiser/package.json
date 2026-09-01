@@ -5,6 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "prebuild": "pnpm --filter s3ntiment-contracts build:constants",
+    "pretest": "pnpm --filter s3ntiment-contracts build:constants",
     "test": "vitest run",
     "dev": "vite",
     "build": "NODE_OPTIONS='--max-old-space-size=16384'  vite build",
