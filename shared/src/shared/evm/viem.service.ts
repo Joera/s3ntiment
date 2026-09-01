@@ -1,17 +1,17 @@
-import { createPublicClient, http, recoverMessageAddress } from "viem";
+import { createPublicClient, recoverMessageAddress } from "viem";
 import type { Chain } from "viem";
-import { getRPCUrl } from "./chains.factory.js";
+import { buildRPCTransport } from "./chains.factory.js";
 
 export class ViemService {
 
     public publicClient: any;
     private chain: Chain;
 
-    constructor(chain: Chain, alchemyKey: string) {
+    constructor(chain: Chain, alchemyKey: string, drpcKey: string) {
         this.chain = chain;
         this.publicClient = createPublicClient({
             chain,
-            transport: http(getRPCUrl(chain.id, alchemyKey)),
+            transport: buildRPCTransport(chain.id, alchemyKey, drpcKey) as any,
         });
     }
 

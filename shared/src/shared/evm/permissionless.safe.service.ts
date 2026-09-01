@@ -3,7 +3,7 @@ import { createSmartAccountClient } from "permissionless";
 import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { createPublicClient, encodeFunctionData, http, keccak256, parseEther, toBytes, Transport } from "viem";
 import type { Chain, PrivateKeyAccount } from "viem";
-import { getRPCUrl } from "./chains.factory.js";
+import { buildRPCTransport } from "./chains.factory.js";
 import { TxOptions, TxResult } from "./tx.types.js";
 import { extractDeployedAddress } from "./contract-address.factory.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -38,7 +38,7 @@ export class PermissionlessSafeService implements IPermissionlessSafeService {
     private entrypointV7: `0x${string}`;
     private txMutex: Promise<void> = Promise.resolve();
 
-    constructor(chain: Chain, pimlicoKey: string, alchemyKey: string, entrypointV7: string) {
+    constructor(chain: Chain, pimlicoKey: string, alchemyKey: string, entrypointV7: string, drpcKey: string) {
 
         this.chain = chain;
         this.pimlicoKey = pimlicoKey;
@@ -46,7 +46,7 @@ export class PermissionlessSafeService implements IPermissionlessSafeService {
 
         this.publicClient = createPublicClient({
             chain,
-            transport: http(getRPCUrl(chain.id, alchemyKey)),
+            transport: buildRPCTransport(chain.id, alchemyKey, drpcKey) as any,
         });
 
         this.pimlicoClient = createPimlicoClient({

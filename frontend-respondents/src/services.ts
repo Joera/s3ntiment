@@ -57,9 +57,9 @@ export class ServiceContainer implements IServices {
       return;
     }
     
-    this.viem = new ViemService(base, import.meta.env.VITE_ALCHEMY_KEY)
+    this.viem = new ViemService(base, import.meta.env.VITE_ALCHEMY_KEY, import.meta.env.VITE_DRPC_KEY)
     this.waap = new WaapService();
-    this.account = new PermissionlessSimpleService(base, import.meta.env.VITE_PIMLICO_KEY, import.meta.env.VITE_ALCHEMY_KEY, import.meta.env.VITE_ENTRYPOINT_ADDRESS_V07);
+    this.account = new PermissionlessSimpleService(base, import.meta.env.VITE_PIMLICO_KEY, import.meta.env.VITE_ALCHEMY_KEY, import.meta.env.VITE_ENTRYPOINT_ADDRESS_V07, import.meta.env.VITE_DRPC_KEY);
     const litEnv = import.meta.env.VITE_LIT_NETWORK == "prod" ? "prod" : "dev";
     console.log("LITENV", litEnv)
     this.lit = new LitService({ "environment": litEnv});
