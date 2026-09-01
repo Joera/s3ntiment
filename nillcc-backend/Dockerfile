@@ -1,13 +1,15 @@
 # Build the nillcc-backend Docker image from the REPOSITORY ROOT context.
 #
-# The backend depends on sibling workspace packages via `file:` deps:
-#   - "s3ntiment-contracts": "file:../contracts"  (runtime import 's3ntiment-contracts/constants')
-#   - "@s3ntiment/shared":    "file:../shared"
-# Those bare specifiers only resolve at runtime when the compiled bundle runs from
-# INSIDE the workspace dir (nillcc-backend/node_modules/s3ntiment-contracts ->
-# ../../contracts). The contracts package ships a GITIGNORED dist/constants.js that
-# this image MUST produce itself (pnpm --filter s3ntiment-contracts build:constants),
-# because it is never committed nor scp'd to the host.
+# The backend depends on sibling workspace packages via the pnpm workspace
+# protocol (workspace:*):
+#   - "s3ntiment-contracts": "workspace:../contracts"  (runtime import 's3ntiment-contracts/constants')
+#   - "@s3ntiment/shared":    "workspace:*"
+# pnpm installs these as true workspace symlinks (node_modules/@s3ntiment/shared
+# -> ../../shared, node_modules/s3ntiment-contracts -> ../../contracts), so the
+# backend tsc AND node resolve them against the SOURCE tree exactly like the dev
+# machine. The contracts package ships a GITIGNORED dist/constants.js that this
+# image MUST produce itself (pnpm --filter s3ntiment-contracts build:constants),
+# and shared ships a gitignored dist/ that is produced by pnpm --filter @s3ntiment/shared build.
 #
 # Build (from repo root context):
 #   docker build -t s3ntiment-nillcc-backend -f nillcc-backend/Dockerfile .
@@ -44,16 +46,13 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 # runtime: contracts/dist/constants.js (gitignored, never shipped), shared/dist,
 # and nillcc-backend/dist/main.js.
 #
-# NOTE: because install ran with --ignore-scripts, the scoped dep @s3ntiment/shared
-# is hardlinked into the pnpm virtual store WITHOUT dist/. The backend resolves
-# @s3ntiment/shared (tsc AND node) through that virtual-store copy (its
-# node_modules/@s3ntiment/shared is a symlink into node_modules/.pnpm/...), so we
-# build shared and copy the freshly built dist into the resolved copy.
+# Because install ran with --ignore-scripts, no lifecycle builds happen here.
+# With workspace:* the backend sees @s3ntiment/shared and s3ntiment-contracts as
+# symlinks into the source tree, so building shared/dist and contracts/dist in
+# place makes them visible to the backend tsc AND node automatically (no need to
+# manually copy dist into a pnpm virtual-store copy).
 RUN pnpm --filter s3ntiment-contracts build:constants \
     && pnpm --filter @s3ntiment/shared build \
-    && RESOLVED_SHARED="$(readlink -f /app/nillcc-backend/node_modules/@s3ntiment/shared)" \
-    && mkdir -p "$RESOLVED_SHARED/dist" \
-    && cp -rL /app/shared/dist/. "$RESOLVED_SHARED/dist/" \
     && pnpm --filter @s3ntiment/nillcc-backend build
 
 WORKDIR /app/nillcc-backend
