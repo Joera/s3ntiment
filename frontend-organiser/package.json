@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@holonym-foundation/mishtiwasm": "^0.3.2",
-    "@human.tech/waap-sdk": "^1.2.0",
+    "@human.tech/waap-sdk": "^2.3.0",
     "@lit-protocol/auth": "^8.2.3",
     "@lit-protocol/auth-helpers": "^8.2.1",
     "@lit-protocol/constants": "^8.0.8",

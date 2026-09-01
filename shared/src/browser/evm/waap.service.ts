@@ -20,13 +20,12 @@ const initConfig = {
         allowedSocials: [],
         authenticationMethods: ["email", "phone"] as AuthenticationMethod[],
         styles: { darkMode: false },
-        allowedOrigins: ["*"]
     },
     project: {
         name: "S3ntiment",
         logo: "",
     },
-    useStaging: true,
+    environment: "staging" as const,
     walletConnectProjectId: "",
     referralCode: "",
 };
@@ -37,6 +36,7 @@ export class WaapService {
     public publicClient: any = null;
     public address: `0x${string}` | null = null;
 
+    private provider: SilkEthereumProviderInterface | null = null;
     private initPromise: Promise<void>;
 
     constructor() {
@@ -44,22 +44,30 @@ export class WaapService {
     }
 
     private async initWaap(): Promise<void> {
-        await initWaaP(initConfig);
+        // 2.3.0's initWaaP returns the provider directly; prefer it over the
+        // window.waap global (which the SDK still sets for backwards compat).
+        this.provider = await initWaaP(initConfig);
+    }
+
+    private get waap(): SilkEthereumProviderInterface {
+        return this.provider ?? window.waap;
     }
 
     async createWallet(chain: Chain): Promise<WalletClient | null> {
 
         await this.initPromise;
 
-        if (!window.waap) {
-            throw new Error("WaaP not initialized — window.waap is undefined");
+        const waap = this.waap;
+
+        if (!this.provider && !window.waap) {
+            throw new Error("WaaP not initialized — provider is undefined");
         }
 
-        const accounts: any = await window.waap.request({ method: "eth_requestAccounts" });
+        const accounts: any = await waap.request({ method: "eth_requestAccounts" });
 
         // console.log("accounts", accounts);
 
-        await window.waap.request({
+        await waap.request({
             method: "wallet_switchEthereumChain",
             params: [{ chainId: `0x${chain.id.toString(16)}` }],
         });
@@ -73,7 +81,7 @@ export class WaapService {
             this.walletClient = createWalletClient({
                 account: this.address as `0x${string}`,
                 chain,
-                transport: custom(window.waap),
+                transport: custom(waap),
             });
         } else {
             console.warn("No accounts returned from WaaP — user may not be logged in yet");
@@ -86,7 +94,7 @@ export class WaapService {
 
     async login(chain: Chain): Promise<LoginResult> {
 
-        await window.waap.login();
+        await this.waap.login();
         await this.createWallet(chain);
 
         if (!this.address || !this.walletClient) {
@@ -100,7 +108,7 @@ export class WaapService {
     }
 
     async logout(): Promise<void> {
-        await window.waap.logout();
+        await this.waap.logout();
     }
 
     getWalletClient(): WalletClient | null {
@@ -117,7 +125,7 @@ export class WaapService {
             throw new Error("Not logged in");
         }
 
-        const signature = await window.waap.request({
+        const signature = await this.waap.request({
             method: "personal_sign",
             params: [toHex(message), this.address],
         });
