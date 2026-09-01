@@ -4,7 +4,7 @@ import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { createPublicClient, encodeFunctionData, http, keccak256, parseEther, toBytes, Transport } from "viem";
 import type { Chain, PrivateKeyAccount, WalletClient } from "viem";
 
-import { getRPCUrl, TxOptions, TxResult } from "./index.js";
+import { buildRPCTransport, TxOptions, TxResult } from "./index.js";
 import { extractDeployedAddress } from "./index.js";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -19,7 +19,7 @@ export class PermissionlessSimpleService {
     private pimlicoKey: string;
     private entrypointV7: `0x${string}`;
 
-    constructor(chain: Chain, pimlicoKey: string, alchemyKey: string, entrypointV7: string) {
+    constructor(chain: Chain, pimlicoKey: string, alchemyKey: string, entrypointV7: string, drpcKey: string) {
 
         this.chain = chain;
         this.pimlicoKey = pimlicoKey;
@@ -27,7 +27,7 @@ export class PermissionlessSimpleService {
 
         this.publicClient = createPublicClient({
             chain,
-            transport: http(getRPCUrl(chain.id, alchemyKey)),
+            transport: buildRPCTransport(chain.id, alchemyKey, drpcKey) as any,
         });
 
         this.pimlicoClient = createPimlicoClient({

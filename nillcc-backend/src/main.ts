@@ -25,11 +25,12 @@ const PINATA_JWT = process.env.VITE_PINATA_JWT || "";
 const PINATA_GATEWAY = process.env.VITE_PINATA_GATEWAY || "";
 const KUBO_ENDPOINT = process.env.VITE_KUBO_ENDPOINT || "";
 const ALCHEMY_KEY = process.env.VITE_ALCHEMY_KEY || "";
+const DRPC_KEY = process.env.VITE_DRPC_KEY || "";
 const LIT_NETWORK = process.env.VITE_LIT_NETWORK || "";
 
 // ====== SERVICES ======
 
-const viem = new ViemService(base, ALCHEMY_KEY);
+const viem = new ViemService(base, ALCHEMY_KEY, DRPC_KEY);
 const nildb = new NilDBBuilderService();
 const lit = new LitService({
   environment: process.env.VITE_LIT_NETWORK == "prod" ? "prod" : "dev",
