@@ -92,6 +92,27 @@ export class WaapService {
         return this.walletClient;
     }
 
+    /**
+     * Teardown helper for the SDK-owned full-viewport modal overlay.
+     *
+     * @human.tech/waap-sdk@2.3.0 injects a fixed 100%x100% scrim
+     * (`#waap-wallet-iframe-container`, z-index 9999999999, pointer-events auto)
+     * into document.body during login and never removes it, so it keeps
+     * swallowing every pointer event over the whole app after auth. This
+     * neutralizes that overlay once our own auth has succeeded. Defensive: no-op
+     * if the element is absent (e.g. unit tests / headless envs).
+     */
+    hideModal(): void {
+        const container = document.getElementById("waap-wallet-iframe-container");
+        if (!container) {
+            return;
+        }
+        container.style.display = "none";
+        container.style.pointerEvents = "none";
+        container.style.visibility = "hidden";
+        container.style.zIndex = "-1";
+    }
+
     async login(chain: Chain): Promise<LoginResult> {
 
         await this.waap.login();
