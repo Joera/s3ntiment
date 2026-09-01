@@ -31,7 +31,7 @@ const POOL_ID = '0x0000000000000000000000000000000000000001';
 const SURVEY_ID = 'survey-abc';
 const EMAIL = 'you@example.com';
 
-const POOL_CONFIG = { pkpId: '0xpkp', pkpDid: 'did:pkp:1' };
+const POOL_CONFIG = { safe: '0xSafe', pkpId: '0xpkp', pkpDid: 'did:pkp:1' };
 
 // A fake signing account with a controllable `.sign({ hash })` — signRotateMessage
 // runs its real viem digest machinery over this mock.
@@ -133,6 +133,26 @@ describe('AccountController.secureWithEmailWallet — first-time secure (canonic
       [{ _id: 'u1', surveyId: SURVEY_ID }],
     );
     expect(services.nillDB.createData).toHaveBeenCalledTimes(1);
+
+    // GAP-19 (2nd caller): the delegation fetch for S must send the full
+    // `poolConfig` object ({safe,pkpId,pkpDid}) the backend route consumes —
+    // NOT flat pkpId/pkpDid (which omitted `safe` and made the handler throw).
+    const fetchMock: any = (globalThis as any).fetch;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toContain(`/api/surveys/${SURVEY_ID}/delegation`);
+    expect(opts.method).toBe('POST');
+    const body = JSON.parse(opts.body);
+    expect(body).toMatchObject({
+      userDid: `did:key:${'seed-e'}`,
+      signature: 'sig:s3ntiment:migrate',
+      userAddress: OLD_LEAF,
+      poolId: POOL_ID,
+      poolConfig: { safe: '0xSafe', pkpId: '0xpkp', pkpDid: 'did:pkp:1' },
+    });
+    // flat fields must no longer be sent at the top level.
+    expect(body.pkpId).toBeUndefined();
+    expect(body.pkpDid).toBeUndefined();
   });
 });
 

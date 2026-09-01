@@ -329,13 +329,18 @@ export class AccountController {
   ): Promise<string> {
     const signature = await this.services.account.signMessage('s3ntiment:migrate');
     const userDid = `did:key:${seedS}`;
+    // GAP-19 (2nd caller): the backend delegation route consumes a `poolConfig`
+    // object ({safe,pkpId,pkpDid}) — see nillcc-backend/src/main.ts POST
+    // /surveys/:surveyId/delegation. Sending flat pkpId/pkpDid omitted `safe`
+    // and made the handler throw. `poolConfig` here is the decrypted
+    // EncryptedConfig.config (same shape as the survey submit caller), so send
+    // it as-is.
     const args = {
       userDid,
       signature,
       userAddress: this.services.account.getSignerAddress(),
       poolId,
-      pkpId: poolConfig?.pkpId,
-      pkpDid: poolConfig?.pkpDid,
+      poolConfig,
     };
     const res = await fetch(`${BACKENDURL}/api/surveys/${surveyId}/delegation`, {
       method: 'POST',
