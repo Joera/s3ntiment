@@ -10,7 +10,6 @@ import {
     SecretVaultBuilderClient,
     NucCmd
 } from '@nillion/secretvaults';
-import { QuestionGroup, tallyResults } from "@s3ntiment/shared";
 import { decrypt, encrypt } from "eciesjs";
 
 
@@ -25,9 +24,6 @@ export class NilDBBuilderService {
     builderSigner: Signer;
     builderDid: Did | undefined;
     builderClient: any;
-    // Injectable so tests can avoid the production 5s settle delay without
-    // changing production behavior (default matches the original hardcoded 5000ms).
-    findResultsDelay: number = 5000;
 
     constructor(builderClient?: any) {
         this.builderKey = config.BUILDER_KEY;
@@ -70,55 +66,6 @@ export class NilDBBuilderService {
         }
     }
 
-    async createSurveyCollection(id: string, rawSchema: any) {
-
-        console.log("raw schema", rawSchema)
-        try {
-            const result = await this.builderClient.createCollection({
-                _id: id,
-                name: rawSchema.name,
-                type: rawSchema.type,
-                schema: rawSchema.schema,
-            });
-            console.log("collection created", result);
-            return id;
-        } catch (e: any) {
-            throw e;
-        }
-    }
-
-    async submitResponseForUser(surveyId: string, userData: any) {
-        const existingDocIds = await this.exists(surveyId, userData.signer);
-        console.log("Existing", existingDocIds);
-
-        if (existingDocIds && existingDocIds.length > 0) {
-            for (const id of existingDocIds) {
-                const d = await this.builderClient.deleteData({
-                    collection: surveyId,
-                    filter: { _id: id },
-                });
-                console.log("deleted", d);
-            }
-        }
-
-        try {
-            return await this.builderClient.createStandardData({
-                collection: surveyId,
-                data: [userData]
-            });
-        } catch (e: any) {
-            if (Array.isArray(e)) {
-                e.forEach((err, i) => {
-                    console.error(`Node ${i}:`, JSON.stringify(err, null, 2));
-                    console.error('Cause:', err.cause);
-                });
-            } else {
-                console.error('Full error:', JSON.stringify(e, null, 2));
-            }
-            throw e;
-        }
-    }
-
     async testDelegationFormat() {
         // Create a test delegation
         const delegation = await Builder.delegation()
@@ -149,75 +96,6 @@ export class NilDBBuilderService {
             } catch (e) {
                 console.log(`Part ${i}: (not JSON)`, parts[i].substring(0, 50));
             }
-        }
-    }
-
-    async delegateCollectionToPkp(collectionId: string, pkpDid: string) {
-        const pkpDidParsed = Did.parse(pkpDid);
-        
-        // Builder delegates create permission to PKP
-        const delegation = await Builder.delegation()
-            .command(`/nil/db/${collectionId}/data/create` as Command)
-            .subject(this.builderDid!)
-            .audience(pkpDidParsed)
-            .expiresIn(1 * 28 * 24 * 60 * 60 * 1000) // 1000 years
-            .signAndSerialize(this.builderSigner);
-
-        console.log('Delegation to PKP created:', delegation.substring(0, 50) + '...');
-        
-        return delegation;
-    }
-
-    // User delegations still need to be created manually
-    // async getUserWriteDelegation(didString: string, surveyId: string) {
-    //     console.log('builderSigner:', this.builderSigner ? 'present' : 'MISSING');
-    //     console.log('collection', surveyId);
-
-    //     const userDid = Did.parse(didString);
-    //     console.log('issuing delegation to DID:', userDid);
-
-    //     const delegation = await Builder.delegation()
-    //         .command(NucCmd.nil.db.data.create as Command)
-    //         .subject(this.builderDid!)
-    //         .audience(userDid)
-    //         .expiresIn(3600_000)
-    //         .signAndSerialize(this.builderSigner);
-
-    //     return delegation;
-    // }
-
-    async getOwnerReadDelegation(surveyOwnerDid: Did, surveyId: string) {
-        return await Builder.delegation()
-            .audience(surveyOwnerDid)
-            .subject(this.builderDid!)
-            .command(NucCmd.nil.db.data.read as Command)
-            .policy([
-                ["==", ".args.collection", surveyId]
-            ])
-            .expiresIn(365 * 24 * 3600_000)
-            .signAndSerialize(this.builderSigner);
-    }
-
-    async findSurveyResults(surveyId: string, groups: QuestionGroup[], signature: any) {
-        await new Promise(r => setTimeout(r, this.findResultsDelay));
-
-        try {
-            const rawResults = await this.builderClient.findData({
-                collection: surveyId,
-                filter: {}
-            });
-
-            console.log(rawResults);
-
-            try {
-                const talliedResults = tallyResults(rawResults.data, groups);
-                return talliedResults;
-            } catch (error) {
-                console.log("error tallying", error);
-            }
-        } catch (error) {
-            console.log("error", JSON.stringify(error));
-            return { result: false };
         }
     }
 

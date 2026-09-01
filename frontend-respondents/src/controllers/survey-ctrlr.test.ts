@@ -203,7 +203,7 @@ describe('SurveyController.setSurveyListener() submission', () => {
     const services = fakeServices();
     const ctrl = new SurveyController(services, SURVEY_ID);
     (ctrl as any).survey = { id: SURVEY_ID, pool: POOL_ID, title: 'T' };
-    (ctrl as any).poolConfig = { pkpId: PKP_ID, pkpDid: PKP_DID };
+    (ctrl as any).poolConfig = { safe: '0xSafe', pkpId: PKP_ID, pkpDid: PKP_DID };
     return { services, ctrl };
   }
 
@@ -241,20 +241,26 @@ describe('SurveyController.setSurveyListener() submission', () => {
     expect(url).toContain(`/api/surveys/${SURVEY_ID}/delegation`);
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body);
+    // GAP-19: the backend delegation route dereferences poolConfig.safe /
+    // poolConfig.pkpId / poolConfig.pkpDid. The client must send the full
+    // poolConfig object (NOT flat pkpId/pkpDid, which omits `safe` and makes
+    // the handler throw). This assertion fails against the pre-fix flat body.
     expect(body).toMatchObject({
       userDid: 'did:key:respondent',
       signature: 'sig:s3ntiment:submit',
       userAddress: RESPONDENT_ADDR,
       poolId: POOL_ID,
-      pkpId: PKP_ID,
-      pkpDid: PKP_DID,
+      poolConfig: { safe: '0xSafe', pkpId: PKP_ID, pkpDid: PKP_DID },
     });
+    // The flat pkpId/pkpDid fields must no longer be sent at the top level.
+    expect(body.pkpId).toBeUndefined();
+    expect(body.pkpDid).toBeUndefined();
 
     // storeOwned(docId, survey, poolConfig, answers, surveyId, delegation)
     expect(aStore).toHaveBeenCalledWith(
       'doc-123',
       expect.objectContaining({ id: SURVEY_ID, pool: POOL_ID }),
-      { pkpId: PKP_ID, pkpDid: PKP_DID },
+      { safe: '0xSafe', pkpId: PKP_ID, pkpDid: PKP_DID },
       answers,
       SURVEY_ID,
       'del-1',
