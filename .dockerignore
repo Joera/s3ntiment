@@ -1,11 +1,31 @@
+# Root .dockerignore — the build-context ignore list for the ISOLATED deploy.
+# deploy.sh ships this to /srv/s3ntiment/backend/.dockerignore so `docker build`
+# (context = the isolated deploy root: nillcc-backend/, shared/, contracts/)
+# excludes artifacts, secrets and stale workspace members. Everything the image
+# needs is regenerated in-image (shared/dist, contracts/dist, nillcc-backend/dist).
+
+# --- build/runtime artifacts (rebuilt in-image) ---
 **/node_modules
 **/dist
+**/artifacts
+**/cache
+**/output
+**/coverage
+
+# --- secrets / local config (compose injects via env_file, never baked in) ---
 **/.env
 **/.env.*
+**/.npmrc
+
+# --- vcs / tooling ---
 .git
 **/.git
-**/output
+**/.gitignore
 **/package-lock.json
+**/pnpm-debug.log*
+**/tsconfig.tsbuildinfo
+
+# --- local-only dirs (never shipped) ---
 logs
 cards
 node
@@ -13,4 +33,16 @@ worktrees
 .pnpm-store
 .public.pi-lens
 .s3n-orchestrator
+.pi
+.pi-lens
+
+# --- stale workspace members that may linger on the deploy host ---
+frontend-organiser
+frontend-respondents
+protocol
+website
+brain
+branding
+
+# --- sensitive / runtime state ---
 **/.data/pool-keys/*.json

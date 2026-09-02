@@ -11,25 +11,27 @@
   "dependencies": {
     "@lit-protocol/auth-helpers": "^8.2.1",
     "@lit-protocol/lit-client": "^8.3.1",
-    "@lit-protocol/networks": "^8.4.1",
+    "@lit-protocol/networks": "8.4.1",
     "@nillion/blindfold": "^0.1.0",
     "@nillion/client-web": "^0.6.0",
     "@nillion/nilai-ts": "^0.3.0",
-    "@nillion/nuc": "^2.0.0",
+    "@nillion/nuc": "^2.0.1",
     "@nillion/secretvaults": "^3.0.0",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
-    "@s3ntiment/shared": "workspace:*",
+    "@s3ntiment/shared": "file:../shared",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "eciesjs": "^0.4.18",
     "express": "^4.18.2",
     "fs": "0.0.1-security",
     "multiformats": "^13.4.2",
-    "s3ntiment-contracts": "workspace:../contracts",
-    "viem": "^2.41.2",
+    "s3ntiment-contracts": "file:../contracts",
+    "viem": "2.46.2",
     "vite": "^7.1.9",
-    "vite-plugin-node-polyfills": "^0.24.0"
+    "vite-plugin-node-polyfills": "^0.24.0",
+    "libsodium-sumo": "0.7.15",
+    "libsodium-wrappers-sumo": "0.7.15"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
@@ -39,11 +41,5 @@
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vitest": "^4.1.11"
-  },
-  "pnpm": {
-    "overrides": {
-      "libsodium-wrappers-sumo": "0.7.13",
-      "libsodium-wrappers": "0.7.13"
-    }
   }
 }

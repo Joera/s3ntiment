@@ -1,9 +1,22 @@
+# nillcc-backend/docker-compose.yaml — bring up the backend from the ISOLATED
+# deploy layout. deploy.sh ships exactly these folders to the host root:
+#
+#   /srv/s3ntiment/backend/
+#     nillcc-backend/   Dockerfile, docker-compose.yaml, package.json,
+#                       pnpm-lock.yaml, src/ ...
+#     shared/           @s3ntiment/shared source (backend dep: file:../shared)
+#     contracts/        s3ntiment-contracts source (backend dep: file:../contracts)
+#     .dockerignore     build-context ignore list
+#
+# build.context is ".." (the isolated deploy root) so Docker sees the sibling
+# folders the Dockerfile needs. The image itself is fully self-contained: no
+# pnpm workspace, no repo-root context, no other workspace members.
+#
+# From the host:  cd /srv/s3ntiment/backend/nillcc-backend && docker compose up -d --build
+
 services:
-  api:
+  s3ntiment:
     build:
-      # Build from the repo ROOT so the workspace sibling packages
-      # (../contracts, ../shared) are available as `file:` deps and
-      # contracts/dist can be produced inside the image.
       context: ..
       dockerfile: nillcc-backend/Dockerfile
     container_name: s3ntiment
@@ -14,12 +27,3 @@ services:
     env_file:
       - .env
     restart: unless-stopped
-    # Uncomment if you need to persist data
-    # volumes:
-    #   - ./data:/app/data
-    networks:
-      - nillion-network
-
-networks:
-  nillion-network:
-    driver: bridge

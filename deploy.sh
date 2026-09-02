@@ -1,60 +1,58 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — ship the s3ntiment workspace to the deploy host and print the
-# exact command to bring up the backend container.
+# deploy.sh — ship the ISOLATED nillcc-backend deploy to the deploy host.
 #
-# The Dockerfile (PR #33, repo-root-context) builds from the REPOSITORY ROOT:
-#   - nillcc-backend/docker-compose.yaml sets build.context: .. and
-#     dockerfile: nillcc-backend/Dockerfile
-#   - the Dockerfile runs `pnpm install --frozen-lockfile` at the workspace
-#     root and builds contracts/dist, shared/dist and nillcc-backend/dist
-#     IN-IMAGE.
-# So the host must receive the FULL workspace (repo root + every member:
-# shared/, contracts/, nillcc-backend/, protocol/, frontend-organiser/,
-# frontend-respondents/, website/) at /srv/s3ntiment/backend. Build artifacts
-# (node_modules, dist, artifacts) are never shipped — the image regenerates
-# them.
+# Ships ONLY the three packages the isolated image needs, plus the
+# build-context support file and the secrets file:
 #
-# .env is handled explicitly and NEVER bulk-shipped: the compose file's
-# `env_file: .env` resolves relative to the compose dir (nillcc-backend/), so
-# the host needs /srv/s3ntiment/backend/nillcc-backend/.env.
+#   nillcc-backend/   backend package (Dockerfile, docker-compose.yaml,
+#                     package.json, pnpm-lock.yaml, src/ ...)
+#   shared/           @s3ntiment/shared source   (backend dep: file:../shared)
+#   contracts/        s3ntiment-contracts source (backend dep: file:../contracts)
+#   .dockerignore     context ignore list (shipped to the host deploy root)
+#   .env              handled explicitly — NEVER overwrites a populated host .env
 #
-# Usage:  ./deploy.sh [--delete]
-#   --delete / --prune   Pass --delete to rsync (remove stale files on the
-#                        host). OFF by default; see NOTES below.
+# Destination: zomi:/srv/s3ntiment/backend, matching the compose build context
+# (docker-compose.yaml sets build.context: .. and dockerfile: nillcc-backend/Dockerfile).
 #
-# This script SUPERSEDES the old scp-based deployers (which copied a flat tree
-# of prebuilt artifacts to /srv/s3ntiment-backend):
-#   - nillcc-backend/deploy.sh   (scp flat tree -> zomi-ts)
-#   - nillcc-backend/deploy2.sh  (scp flat tree -> zomi)
-#   - nillcc-backend/ideploy.sh  (scp flat tree -> local /srv/s3ntiment-backend)
-# Those relied on locally-built dist/ being copied to the host; the new image
-# builds everything in-image from the workspace root, so no prebuilt artifacts
-# are shipped. Old scripts deliberately left in place for reference.
+# The old repo-root / pnpm-workspace build is gone. The image builds
+# shared/dist, contracts/dist/constants.js and nillcc-backend/dist IN-IMAGE from
+# this isolated layout; no node_modules/dist/artifacts are shipped (rsync
+# excludes them) and no other workspace members (frontend, protocol, ...) reach
+# the host.
+#
+# This script supersedes the old scp/rsync full-workspace deployers
+# (nillcc-backend/deploy.sh, deploy2.sh, ideploy.sh), which are left in place
+# only for reference.
+#
+# Usage:  ./deploy.sh [--dry-run]
+#   --dry-run / -n   Show exactly what would be shipped (rsync -n, no ssh
+#                    side-effects, no host changes) and print the run command.
+#
+# HOST and REMOTE_DIR are overridable via env for testing, e.g.:
+#   HOST=localhost REMOTE_DIR=/tmp/deploy-sim ./deploy.sh --dry-run
 
 set -euo pipefail
 
-HOST="zomi"
-REMOTE_DIR="/srv/s3ntiment/backend"     # destination = repo root on the host
-COMPOSE_REL="nillcc-backend"             # compose dir relative to REMOTE_DIR
-ENV_REL="${COMPOSE_REL}/.env"            # host .env path relative to REMOTE_DIR
+: "${HOST:=zomi}"
+: "${REMOTE_DIR:=/srv/s3ntiment/backend}"
+COMPOSE_REL="nillcc-backend"
 
 # Repo root = directory containing this script, so ./deploy.sh works from any cwd.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-PRUNE=0
+DRY_RUN=0
 
 usage() {
-  # Print just the header comment block (lines 2 up to the blank line before `set -euo`).
   sed -n '2,/^$/p' "$REPO_ROOT/deploy.sh" | sed '/^set -euo pipefail/,$d'
 }
 
 for arg in "$@"; do
   case "$arg" in
-    --delete|--prune) PRUNE=1 ;;
-    -h|--help)        usage; exit 0 ;;
-    *)                echo "Unknown argument: $arg" >&2; usage; exit 2 ;;
+    --dry-run|-n) DRY_RUN=1 ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            echo "Unknown argument: $arg" >&2; usage; exit 2 ;;
   esac
 done
 
@@ -62,68 +60,75 @@ done
 command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync is required but not installed." >&2; exit 1; }
 command -v ssh   >/dev/null 2>&1 || { echo "ERROR: ssh is required but not installed." >&2;   exit 1; }
 
-echo ">> Deploying workspace into ${REMOTE_DIR} on '${HOST}' from ${REPO_ROOT}"
-echo ">> Checking ssh connectivity to ${HOST} ..."
+# --- helpers ---------------------------------------------------------------
+# Run a command on the host (no-op body under --dry-run; connectivity is still
+# checked so --dry-run validates the deploy is even possible).
+host() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+  ssh -o BatchMode=yes "$@"
+}
+
+# rsync wrapper: real run, or -n dry-run listing exactly what would transfer.
+rsync_run() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    rsync -n -a --itemize-changes --out-format='%n' "$@"
+  else
+    rsync -a --partial --info=stats1 "$@"
+  fi
+}
+
+echo ">> Deploying ISOLATED backend into ${REMOTE_DIR} on '${HOST}' from ${REPO_ROOT}"
+[[ "$DRY_RUN" -eq 1 ]] && echo ">> DRY RUN — nothing will be transferred or changed on the host."
 ssh -o BatchMode=yes -o ConnectTimeout=10 "${HOST}" 'true'
 
-# --- rsync excludes --------------------------------------------------------
-# Mirrors the .dockerignore intent for what must NOT reach the host (the image
-# rebuilds these in-image) plus local-only / sensitive paths. .env/.env.* is
-# ALWAYS excluded from the bulk copy (handled explicitly afterwards).
+# Ensure the remote layout exists (skipped under --dry-run).
+host "${HOST}" "mkdir -p '${REMOTE_DIR}'"
+
+# --- rsync: ONLY the three packages + .dockerignore ------------------------
+# NO --delete: the host is never pruned (stale files are simply ignored by the
+# context's .dockerignore). node_modules/dist/artifacts/.env are always excluded
+# and are regenerated in-image / injected explicitly.
 declare -a EXCLUDES=(
   --exclude='.git/'
-  --exclude='worktrees/'
-  --exclude='.pnpm-store/'
-  --exclude='.s3n-orchestrator/'
-  --exclude='.pi/'
-  --exclude='.pi-lens/'
   --exclude='**/node_modules/'
   --exclude='**/dist/'
   --exclude='**/artifacts/'
   --exclude='**/cache/'
   --exclude='**/output/'
-  --exclude='**/.data/pool-keys/'
   --exclude='**/.env'
   --exclude='**/.env.*'
-  --exclude='branding/'
-  --exclude='brain/'
-  --exclude='logs/'
-  --exclude='cards/'
-  --exclude='node/'
-  --exclude='nillcc-backend/data/'
+  --exclude='**/.data/pool-keys/'
 )
 
-declare -a RSYNC_ARGS=(-a --partial --info=stats1)
-if [[ "$PRUNE" -ne 1 ]]; then
-  echo ">> rsync WITHOUT --delete (off by default; stale host files kept)"
-else
-  echo ">> rsync WITH --delete (prune stale files; excluded paths are protected from deletion)"
-  RSYNC_ARGS+=(--delete)
-fi
+for dir in nillcc-backend shared contracts; do
+  echo ">> shipping ${dir}/ -> ${REMOTE_DIR}/${dir}/"
+  rsync_run "${EXCLUDES[@]}" "${REPO_ROOT}/${dir}/" "${HOST}:${REMOTE_DIR}/${dir}/"
+done
 
-echo ">> Shipping full workspace ..."
-# Trailing slashes on source and destination copy the workspace CONTENTS into
-# ${REMOTE_DIR} (repo root lands directly in /srv/s3ntiment/backend).
-rsync "${RSYNC_ARGS[@]}" "${EXCLUDES[@]}" "${REPO_ROOT}/" "${HOST}:${REMOTE_DIR}/"
+echo ">> shipping .dockerignore -> ${REMOTE_DIR}/.dockerignore"
+rsync_run "${REPO_ROOT}/.dockerignore" "${HOST}:${REMOTE_DIR}/.dockerignore"
 
-# --- .env handling (explicit, never overwrite a populated host .env) -------
+# --- .env handling (explicit; NEVER clobber a populated host .env) ---------
 local_env="${REPO_ROOT}/${COMPOSE_REL}/.env"
-host_env="${REMOTE_DIR}/${ENV_REL}"
+host_env="${REMOTE_DIR}/${COMPOSE_REL}/.env"
 
 if [[ -s "$local_env" ]]; then
-  echo ">> Shipping local ${local_env} -> ${HOST}:${host_env}"
-  rsync -a "$local_env" "${HOST}:${host_env}"
-elif ssh -o BatchMode=yes "${HOST}" "[ -s '${host_env}' ]"; then
-  echo ">> No local ${COMPOSE_REL}/.env found; host already has a populated .env at ${host_env}."
-  echo "   Leaving the host .env untouched (NOT overwritten)."
+  echo ">> shipping local ${local_env} -> ${HOST}:${host_env}"
+  rsync_run "$local_env" "${HOST}:${host_env}"
+elif host "${HOST}" "[ -s '${host_env}' ]"; then
+  echo ">> no local ${COMPOSE_REL}/.env; host already has a populated .env at ${host_env} — NOT overwritten."
 else
-  echo ">> No local ${COMPOSE_REL}/.env and no populated host .env — creating a placeholder on the host."
-  ssh -o BatchMode=yes "${HOST}" \
-    "mkdir -p '${REMOTE_DIR}/${COMPOSE_REL}' && cat > '${host_env}'" <<'PLACEHOLDER'
-# .env for the s3ntiment backend (nillcc-backend). docker-compose.yaml's
-# `env_file: .env` resolves relative to this file's directory, so it MUST live
-# here (nillcc-backend/.env) — a repo-root .env is NOT read by compose.
-# Fill in real values before running: docker compose up -d --build
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo ">> (dry-run) would create an EMPTY placeholder at ${HOST}:${host_env} (no local .env found)."
+  else
+    echo ">> no local ${COMPOSE_REL}/.env and no populated host .env — creating a placeholder on the host."
+    host "${HOST}" "mkdir -p '${REMOTE_DIR}/${COMPOSE_REL}' && cat > '${host_env}'" <<'PLACEHOLDER'
+# .env for the s3ntiment backend. docker-compose.yaml's `env_file: .env` resolves
+# relative to the compose file (nillcc-backend/), so this MUST live at
+# /srv/s3ntiment/backend/nillcc-backend/.env. Fill in real values before running
+# `docker compose up -d --build`.
 NODE_ENV=production
 
 # --- chain / RPC ---
@@ -161,15 +166,9 @@ VITE_HUMAN_NETWORK_SIGNER_URL=
 VITE_PIMLICO_KEY=
 VITE_USE_SAFE=
 PLACEHOLDER
-  echo "!! WARNING: created an EMPTY placeholder at ${HOST}:${host_env}."
-  echo "   Fill in the secrets there on the host BEFORE running 'docker compose up -d --build'."
-fi
-
-# If the developer keeps secrets in a repo-ROOT .env (as some prior setups
-# did), point them at the file compose actually reads.
-if [[ -s "${REPO_ROOT}/.env" ]]; then
-  echo ">> Note: found a repo-root .env — the new compose reads nillcc-backend/.env, not the root one."
-  echo "   If you want to reuse it:  cp ${REPO_ROOT}/.env ${REPO_ROOT}/${COMPOSE_REL}/.env && ./deploy.sh"
+    echo "!! WARNING: created an EMPTY placeholder at ${HOST}:${host_env}."
+    echo "   Fill in the secrets there on the host BEFORE running 'docker compose up -d --build'."
+  fi
 fi
 
 # --- done: print the exact next command ------------------------------------
