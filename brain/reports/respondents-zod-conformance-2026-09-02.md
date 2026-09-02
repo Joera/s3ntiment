@@ -86,4 +86,6 @@ exposes what each controller calls at runtime:
 ## Branch / PR
 
 - Branch: `deepseek/respondents-zod-conformance`
-- PR: see PR URL in the PR description.
+- PR: https://github.com/Joera/s3ntiment/pull/43 (OPEN, not merged)
+- Commit: `88287aedcd14616a1ff346517a0ac599575a0a36`
+- Base: `main`
