@@ -91,13 +91,19 @@ function surveyConfig() {
   return {
     pool: POOL_ID,
     id: SURVEY_ID,
-    config: {
-      pkpId: 'pkp-1',
-      pkpDid: 'did:key:pkp1',
-      safe: '0xSafE',
-      queryIds: ['old-query'],
-    },
+    title: 'Do you like coffee?',
+    introduction: 'A short survey',
     groups: [{ id: 'g1' }],
+    batches: [],
+  };
+}
+
+function poolConfig() {
+  return {
+    pkpId: 'pkp-1',
+    pkpDid: 'did:key:pkp1',
+    safe: '0xSafE',
+    groupId: 'group-1',
   };
 }
 
@@ -120,6 +126,7 @@ describe('SurveyController.create', () => {
       signature: 'sig-1',
       userAddress: '0xUser',
       surveyConfig: surveyConfig(),
+      poolConfig: poolConfig(),
     };
 
     const cid = await ctrl.create(body);
@@ -133,18 +140,66 @@ describe('SurveyController.create', () => {
     // usage key fetched for the pool.
     expect(deps.litPoolKeys.get).toHaveBeenCalledWith(POOL_ID);
 
-    // Aggregation query id recorded back onto the config.
-    expect(body.surveyConfig.config.queryIds).toEqual([`query-${SURVEY_ID}`]);
-
     // Both audience encryptions go through lit, plus the builder-side scoring.
     expect(deps.lit.encrypt).toHaveBeenCalledTimes(2);
     expect(deps.nildb.encryptToBuilder).toHaveBeenCalledTimes(1);
 
     expect(cid).toBe(CID);
     const uploaded = JSON.parse((deps.ipfs.uploadToPinata as any).mock.calls[0][0]);
+    // All survey fields round-trip into the uploaded config.
+    expect(uploaded.id).toBe(SURVEY_ID);
+    expect(uploaded.pool).toBe(POOL_ID);
+    expect(uploaded.title).toBe('Do you like coffee?');
+    expect(uploaded.groups).toEqual([{ id: 'g1' }]);
     expect(uploaded.nilDid).toBe('did:key:builder');
     expect(uploaded.encryptedScoring).toBe('b64-encrypted');
     expect(uploaded.isScored).toBe(true);
+    // Aggregation query id round-trips into the uploaded config.
+    expect(uploaded.queryIds).toEqual([`query-${SURVEY_ID}`]);
+    // Pool identity is NOT embedded on the survey payload anymore.
+    expect(uploaded.config).toBeUndefined();
+  });
+
+  it('fails with a clear error when the payload omits poolConfig entirely', async () => {
+    const deps = fakeDeps();
+    const ctrl = new SurveyController(
+      deps.nildb,
+      deps.lit,
+      deps.litPoolKeys,
+      deps.ipfs,
+      deps.viem,
+    );
+    const body = {
+      signature: 'sig-1',
+      userAddress: '0xUser',
+      surveyConfig: surveyConfig(),
+      // no poolConfig — the pre-fix create-survey payload shape
+    };
+
+    await expect(ctrl.create(body)).rejects.toThrow(/MISSING_POOL_CONFIG/);
+    // nothing is uploaded or delegated before the guard trips
+    expect(deps.ipfs.uploadToPinata).not.toHaveBeenCalled();
+    expect(deps.lit.encrypt).not.toHaveBeenCalled();
+  });
+
+  it('fails with a clear error when poolConfig lacks the pool identity', async () => {
+    const deps = fakeDeps();
+    const ctrl = new SurveyController(
+      deps.nildb,
+      deps.lit,
+      deps.litPoolKeys,
+      deps.ipfs,
+      deps.viem,
+    );
+    const body = {
+      signature: 'sig-1',
+      userAddress: '0xUser',
+      surveyConfig: surveyConfig(),
+      poolConfig: { safe: '0xSafE' }, // missing pkpId / pkpDid
+    };
+
+    await expect(ctrl.create(body)).rejects.toThrow(/MISSING_POOL_CONFIG/);
+    expect(deps.ipfs.uploadToPinata).not.toHaveBeenCalled();
   });
 });
 

@@ -23,8 +23,15 @@ export class SurveyController {
     async create(body: any) {
 
         const contract = surveyStore.address;
-        const { signature, userAddress, surveyConfig } = body;
-        const { pkpId, pkpDid } = surveyConfig.config;
+        const { signature, userAddress, surveyConfig, poolConfig } = body;
+
+        // Pool identity travels as a separate `poolConfig` (matching update() and the
+        // delegation callers), NOT nested on surveyConfig. Guard loudly so a mismatched
+        // create payload fails with a clear error instead of a cryptic destructure crash.
+        if (!poolConfig || !poolConfig.pkpId || !poolConfig.pkpDid || !poolConfig.safe) {
+            throw new Error('MISSING_POOL_CONFIG: create-survey payload requires poolConfig with pkpId, pkpDid and safe');
+        }
+        const { pkpId, pkpDid, safe } = poolConfig;
 
         const usage_api_key = await this.litPoolKeys.get(surveyConfig.pool)
 
@@ -32,7 +39,7 @@ export class SurveyController {
         const _isScored = isScored(surveyConfig.groups);
         const rawSchema = createSurveyCollectionSchema(safeConfig, "owned")
 
-        const nillPkp = new NillionPkpClient(this.lit, surveyConfig.pool, surveyConfig.config.safe, contract)
+        const nillPkp = new NillionPkpClient(this.lit, surveyConfig.pool, safe, contract)
         const collectionResponse = await nillPkp.createCollection(signature, userAddress, pkpId, pkpDid, usage_api_key, rawSchema);
         console.log("collectionResponse", collectionResponse);
 
@@ -45,7 +52,9 @@ export class SurveyController {
         const queryDef = createSurveyAggregationQuery(surveyConfig.id, surveyConfig.groups);
         const queryResponse = await nillPkp.createQuery(signature, userAddress, pkpId, pkpDid, usage_api_key, queryDef);
 
-        surveyConfig.config.queryIds = [queryDef._id];
+        // queryIds round-trip into the uploaded config (previously written to the
+        // now-removed surveyConfig.config; added explicitly here).
+        const queryIds = [queryDef._id];
 
         const [ encryptedForOwner, encryptedForRespondent] = await Promise.all([
             this.lit.encrypt(usage_api_key, pkpId, JSON.stringify(safeConfigWithScoring)),
@@ -56,6 +65,7 @@ export class SurveyController {
 
         const config: EncryptedConfig = {
             ...surveyConfig,
+            queryIds,
             nilDid: this.nildb.builderDid.didString,
             encryptedForOwner,
             encryptedForRespondent,
