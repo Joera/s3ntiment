@@ -23,13 +23,16 @@ vi.mock('@s3ntiment/shared', () => ({
   isScored: vi.fn((groups: any) => Boolean(groups && groups.length)),
   // imported but unused by the controller (dead import); must still resolve.
   createUserDataObject: vi.fn(),
+  // controller consumes the shared nillcc request-validator on the delegation
+  // submit path; stubbed to pass here (validator unit-tested in @s3ntiment/shared).
+  validateDelegation: vi.fn(() => null),
 }));
 vi.mock('@s3ntiment/shared/components', () => ({}));
 vi.mock('../components/survey-questions.js', () => ({}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
 
 import { SurveyController } from './survey.ctrlr.js';
-import { fetchAndDecryptSurveyWithRespondent, isScored } from '@s3ntiment/shared';
+import { fetchAndDecryptSurveyWithRespondent, isScored, validateDelegation } from '@s3ntiment/shared';
 import { router } from '../router.js';
 import { store } from '../state/store.js';
 
@@ -280,6 +283,25 @@ describe('SurveyController.setSurveyListener() submission', () => {
     await cb({ detail: { answers: [] } });
 
     expect(services.nillDB.storeOwned).toHaveBeenCalled();
+    expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('fail-fast: does NOT fetch delegation or storeOwned when the payload would be rejected', async () => {
+    const { services, ctrl } = buildController();
+
+    // Simulate a malformed delegation payload (e.g. missing poolConfig): the
+    // local validator fails and the submission must never hit the wire.
+    vi.mocked(validateDelegation).mockReturnValueOnce({
+      error: 'MISSING_FIELD',
+      message: 'missing poolConfig',
+    });
+
+    await ctrl.setSurveyListener();
+    const cb = (globalThis as any).__surveyGetListener('survey-complete');
+    await cb({ detail: { answers: [] } });
+
+    expect((globalThis as any).fetch).not.toHaveBeenCalled();
+    expect(services.nillDB.storeOwned).not.toHaveBeenCalled();
     expect(router.navigate).not.toHaveBeenCalled();
   });
 });

@@ -13,13 +13,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // on the Pool (GAP-3). fetch is stubbed per-URL so the full create-pool +
 // create-survey sequence runs against deterministic responses.
 
-vi.mock('@s3ntiment/shared', () => ({}));
+vi.mock('@s3ntiment/shared', () => ({
+  // The controller now consumes the shared nillcc request-validators at
+  // runtime (guardValid(validate*)). The pool/build/survey payloads produced in
+  // this test are valid, so the validators are stubbed to return null (= pass);
+  // the validator logic itself is unit-tested in @s3ntiment/shared.
+  validatePoolCreate: vi.fn(() => null),
+  validateSurveyCreate: vi.fn(() => null),
+  validateRegisterBuilder: vi.fn(() => null),
+  throwOnFailure: vi.fn(),
+}));
 vi.mock('../components/draft-survey-editor.js', () => ({}));
 vi.mock('../factories/survey.factory.js', () => ({ createBatch: vi.fn() }));
 vi.mock('../services/services.js', () => ({}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
 
 import { NewSurveyController } from './new.ctrlr.ts.ts';
+import { validatePoolCreate } from '@s3ntiment/shared';
 import { createBatch } from '../factories/survey.factory.js';
 import { router } from '../router.js';
 import { store } from '../state/store.js';
@@ -202,5 +212,37 @@ describe('NewSurveyController — create-survey payload contract', () => {
       litNetwork: 'datil-dev',
     });
     expect(body.surveyConfig.config).toBeUndefined();
+  });
+});
+
+describe('NewSurveyController — producer-side boundary validation (fail-fast)', () => {
+  it('aborts the pool create without sending when the payload would be rejected', async () => {
+    const services = fakeServices();
+    const ctrl = new NewSurveyController(services);
+
+    // Simulate a malformed pool payload (e.g. missing safeAddress): the local
+    // validator fails and the fetch must never fire.
+    vi.mocked(validatePoolCreate).mockReturnValueOnce({
+      error: 'MISSING_FIELD',
+      message: 'missing safeAddress',
+    });
+
+    await (ctrl as any).handleSurveySubmit({
+      detail: {
+        survey: {
+          title: 'x',
+          introduction: 'y',
+          groups: [],
+          batches: [{ id: '', pool: '' }],
+        },
+      },
+    });
+
+    const fetchMock = (globalThis as any).fetch;
+    const poolCall = fetchMock.mock.calls.find((c: any[]) =>
+      String(c[0]).includes('/api/pools'),
+    );
+    expect(poolCall).toBeUndefined();
+    expect(store.ui.newStep).toBe('error');
   });
 });
