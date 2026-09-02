@@ -9,6 +9,10 @@
       "import": "./dist/shared/index.js",
       "types": "./dist/shared/index.d.ts"
     },
+    "./nillcc": {
+      "import": "./dist/shared/nillcc/index.js",
+      "types": "./dist/shared/nillcc/index.d.ts"
+    },
     "./dev": {
       "import": "./src/index.js",
       "types": "./src/index.d.ts"
@@ -41,6 +45,9 @@
     "build": "tsc",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
   },
   "peerDependencies": {
     "@holonym-foundation/mishtiwasm": "^0.3.2",

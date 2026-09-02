@@ -9,6 +9,12 @@ import '../components/registered-questions-editor.js';
 import { router } from "../router.js";
 import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import {  fetchAndDecryptSurveyWithOwner, fetchLitApiKey, Pool, Survey } from "@s3ntiment/shared";
+import {
+  validateResultsInput,
+  validateSurveyUpdateInput,
+  validateSurveyUpdateOutput,
+} from '@s3ntiment/shared/nillcc';
+import { buildResultsPayload, buildSurveyUpdatePayload } from './nillcc-payloads.js';
 import { renderIcon } from "@s3ntiment/shared/assets";
 import '@s3ntiment/shared/components';
 
@@ -224,18 +230,24 @@ export class SurveyController {
             userAddress: this.services.safe.getSignerAddress()
         }
 
+        // Results — payload shaped + zod-validated (fast-fail) before the
+        // round-trip. The builder maps `queryIds` onto the wire name `survey`
+        // that the results boundary validates as a required array.
+        const resultsPayload = buildResultsPayload({
+            auth,
+            queryIds: this.survey.queryIds ?? [],
+            poolId: this.survey.pool,
+            groups: this.survey.groups,
+            poolConfig: this.pool.config
+        });
+        validateResultsInput(resultsPayload);
+
         const response = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/results`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ 
-                auth,
-                queryIds: this.survey.queryIds,
-                poolId: this.survey.pool,
-                groups: this.survey.groups,
-                poolConfig: this.pool.config 
-            })
+            body: JSON.stringify(resultsPayload)
         });
 
         console.log(response);
@@ -332,20 +344,27 @@ export class SurveyController {
 
                 console.log("UPDATING WITH THIS", surveyConfig)
         
+                // Update — payload shaped + zod-validated (fast-fail) before the
+                // round-trip. The builder reshapes onto the wire contract the
+                // update boundary accepts: { survey, poolConfig, surveyConfig:{id} }.
+                const updatePayload = buildSurveyUpdatePayload({
+                    surveyId,
+                    surveyConfig,
+                    poolConfig: this.pool.config
+                });
+                validateSurveyUpdateInput(updatePayload, surveyId);
+
                 let res: any = await fetch(`${BACKENDURL}/api/surveys/${surveyId}`, {
                     method: 'PUT',
                     headers: {
                     'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({   
-                        surveyId,      
-                        surveyConfig,
-                        safeAddress: this.pool.config?.safe,
-                        poolId: existing.pool
-                    })
+                    body: JSON.stringify(updatePayload)
                 });
 
                 const result = JSON.parse(await res.text());
+                // Output conformance: the update boundary returns { cid }.
+                validateSurveyUpdateOutput(result);
 
                 if (this.services.ipfs.isCID(result.cid)) {
 
