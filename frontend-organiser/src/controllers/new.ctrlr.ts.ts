@@ -97,11 +97,18 @@ export class NewSurveyController {
         body: JSON.stringify(poolPayload)
       });
 
-      if (!poolResponse.ok) store.setUI({ newStep: 'error' });
+      if (!poolResponse.ok) {
+        // Real backend error — surface it and stop. Do NOT fall through to the
+        // output validator, which would throw a misleading zod error over the
+        // 4xx/5xx body instead of the real one.
+        store.setUI({ newStep: 'error' });
+        return;
+      }
 
       const poolData = await poolResponse.json();
       // Output conformance: the pool identity the backend minted must keep the
-      // contract the FE derefs below (pkpId / pkpDid / groupId).
+      // contract the FE derefs below (pkpId / pkpDid / groupId). Only runs on
+      // an ok response.
       validatePoolCreateOutput(poolData);
 
       const { pkpId, pkpDid, groupId } = poolData;
@@ -137,7 +144,13 @@ export class NewSurveyController {
         body: JSON.stringify(builderPayload)
       });
 
-      if (!builderResponse.ok) console.log("builder registration failed") 
+      if (!builderResponse.ok) {
+        // Real backend error — log it and stop. Do NOT fall through to the
+        // output validator, which would throw a misleading zod error over the
+        // 4xx/5xx body instead of the real one.
+        console.log("builder registration failed");
+        return;
+      }
 
       validateRegisterBuilderOutput(await builderResponse.json());
 
@@ -201,7 +214,13 @@ export class NewSurveyController {
       body: JSON.stringify(surveyPayload)
     });
 
-    if (!surveyResponse.ok) store.setUI({ newStep: 'error' });
+    if (!surveyResponse.ok) {
+      // Real backend error — surface it and stop. Do NOT fall through to the
+      // output validator, which would throw a misleading zod error over the
+      // 4xx/5xx body instead of the real one.
+      store.setUI({ newStep: 'error' });
+      return;
+    }
 
     const surveyData = await surveyResponse.json();
     // Output conformance: the create boundary returns { cid }.

@@ -362,6 +362,15 @@ export class SurveyController {
                     body: JSON.stringify(updatePayload)
                 });
 
+                if (!res.ok) {
+                    // Real backend error — surface it and stop. Previously there
+                    // was NO res.ok guard here: the raw body was JSON.parsed and
+                    // validateSurveyUpdateOutput ran on whatever came back,
+                    // throwing a misleading zod error over the 4xx/5xx body.
+                    console.error('survey update failed (backend):', await res.text());
+                    return;
+                }
+
                 const result = JSON.parse(await res.text());
                 // Output conformance: the update boundary returns { cid }.
                 validateSurveyUpdateOutput(result);
