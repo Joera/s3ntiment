@@ -13,11 +13,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@s3ntiment/shared/components', () => ({}));
 vi.mock('@s3ntiment/shared', () => ({
-  // AccountController now consumes the shared nillcc request-validator
-  // (validateDelegation) at runtime. The migrate payload built in these tests
-  // is valid, so it is stubbed to return null (= pass); the validator logic
-  // itself is unit-tested in @s3ntiment/shared.
-  validateDelegation: vi.fn(() => null),
+  // AccountController now consumes the shared zod nillcc request-validator
+  // (validateDelegationInput) at runtime. The migrate payload built in these
+  // tests is valid, so it is stubbed to pass (return the input); the validator
+  // logic itself is unit-tested in @s3ntiment/shared.
+  validateDelegationInput: vi.fn((input: any) => input),
 }));
 vi.mock('../humanWallet.factory.js', () => ({ authenticate: vi.fn() }));
 

@@ -23,16 +23,17 @@ vi.mock('@s3ntiment/shared', () => ({
   isScored: vi.fn((groups: any) => Boolean(groups && groups.length)),
   // imported but unused by the controller (dead import); must still resolve.
   createUserDataObject: vi.fn(),
-  // controller consumes the shared nillcc request-validator on the delegation
-  // submit path; stubbed to pass here (validator unit-tested in @s3ntiment/shared).
-  validateDelegation: vi.fn(() => null),
+  // controller consumes the shared zod nillcc request-validator on the
+  // delegation submit path; stubbed to pass here (validator unit-tested in
+  // @s3ntiment/shared).
+  validateDelegationInput: vi.fn((input: any) => input),
 }));
 vi.mock('@s3ntiment/shared/components', () => ({}));
 vi.mock('../components/survey-questions.js', () => ({}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
 
 import { SurveyController } from './survey.ctrlr.js';
-import { fetchAndDecryptSurveyWithRespondent, isScored, validateDelegation } from '@s3ntiment/shared';
+import { fetchAndDecryptSurveyWithRespondent, isScored, validateDelegationInput } from '@s3ntiment/shared';
 import { router } from '../router.js';
 import { store } from '../state/store.js';
 
@@ -290,10 +291,9 @@ describe('SurveyController.setSurveyListener() submission', () => {
     const { services, ctrl } = buildController();
 
     // Simulate a malformed delegation payload (e.g. missing poolConfig): the
-    // local validator fails and the submission must never hit the wire.
-    vi.mocked(validateDelegation).mockReturnValueOnce({
-      error: 'MISSING_FIELD',
-      message: 'missing poolConfig',
+    // local zod validator throws and the submission must never hit the wire.
+    vi.mocked(validateDelegationInput).mockImplementationOnce(() => {
+      throw new Error('Delegation input validation failed:\npoolConfig: poolConfig is required');
     });
 
     await ctrl.setSurveyListener();

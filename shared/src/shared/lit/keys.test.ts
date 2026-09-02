@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fetchLitApiKey } from './keys.js';
-import { NillccValidationError } from '../nillcc-validation.js';
 
 // Producer-side wiring test for the /api/lit/usage-key caller: a payload the
 // backend would reject must throw locally (before the fetch); a valid payload
@@ -15,10 +14,11 @@ describe('fetchLitApiKey producer-side validation', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ apiKey: 'k' }) }));
     vi.stubGlobal('fetch', fetchMock);
 
-    // userAddr missing -> validateUsageKey fails locally -> throw, no fetch.
+    // userAddr missing -> validateUsageKeyInput fails locally -> throws a plain
+    // Error whose message names the offending field (userAddr) -> no fetch.
     await expect(
       fetchLitApiKey('http://backend', '', '0xsig', '0xpool'),
-    ).rejects.toBeInstanceOf(NillccValidationError);
+    ).rejects.toThrow(/userAddr/);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
