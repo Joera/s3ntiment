@@ -1,9 +1,9 @@
 import { UIStore } from './ui.store.js';
 import { UserStore } from './user.store.js';
-import { SurveysStore, SurveyEntry, SurveyMap } from './surveys.store.js';
+import { SurveysStore } from './surveys.store.js';
 import { UIState, UserState } from './store.types.js';
 import { Listener } from './observable.js';
-import { Pool, Survey } from '@s3ntiment/shared';
+import { Pool, Survey, SurveyEntry, SurveyMap } from '@s3ntiment/shared';
 import { PoolStore } from './pool.store.js';
 
 class Store {

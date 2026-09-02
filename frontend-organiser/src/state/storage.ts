@@ -1,4 +1,5 @@
-import { DraftsMap, PoolsMap, BatchesMap, SurveysMap } from './types.js';
+import { PoolsMap, BatchesMap, SurveysMap } from '@s3ntiment/shared';
+import { DraftsMap } from './types.js';
 
 const DRAFTS_STORAGE_KEY = 'surveyDrafts';
 const CURRENT_DRAFT_KEY = 'currentDraftId';

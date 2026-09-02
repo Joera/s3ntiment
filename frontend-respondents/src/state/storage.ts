@@ -1,6 +1,5 @@
-import { Pool } from "@s3ntiment/shared";
+import { PoolsMap, SurveyMap } from "@s3ntiment/shared";
 import { UserState } from "./store.types";
-import { SurveyMap } from "./surveys.store";
 
 // const CAP_DELEGATION_KEY = 'litCapabilityDelegation';
 const SURVEYS_STORAGE_KEY = 'surveys';
@@ -104,10 +103,6 @@ export function saveAnchorAddressFromStorage(anchor: string): void {
   } catch (e) {
     console.warn('Failed to save anchor address to localStorage:', e);
   }
-}
-
-export interface PoolsMap {
-  [id: string]: Pool;
 }
 
 export function loadPoolsFromStorage(): PoolsMap {

@@ -104,8 +104,28 @@ export interface Pool {
     owners?: string[],
     readers?: string[],
     createdAt: number,
-    config: PoolConfig
+    // Optional: a pool's crypto identity (pkpId/pkpDid/groupId) is minted at
+    // creation and persisted only by the creating organiser (backend POST
+    // /api/pools response); a pool imported via on-chain lookup (getPoolInfo)
+    // legitimately has no config, so the type must not force it. The safe +
+    // network identity are derivable at import time and populate the field for
+    // imported pools.
+    config?: PoolConfig
 }
+
+// Map / entry aliases — single declaration site across the monorepo (frontends
+// must re-import these from @s3ntiment/shared, never re-declare them). See
+// SPEC-shared and the type-drift consolidation PR.
+export type PoolsMap = Record<string, Pool>;
+export type SurveysMap = Record<string, Survey>;
+export type BatchesMap = Record<string, Batch>;
+
+// SurveyEntry: a Survey enriched with per-respondent answered-question state.
+export interface SurveyEntry extends Survey {
+  answeredQuestions: number[];
+}
+
+export type SurveyMap = Record<string, SurveyEntry>;
 
 // Event detail types
 export interface QuestionUpdateDetail {
