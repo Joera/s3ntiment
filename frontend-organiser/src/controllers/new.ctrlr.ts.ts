@@ -167,6 +167,11 @@ export class NewSurveyController {
       // createdAt: BigInt(Math.floor(Date.now() / 1000))
     }
 
+    // Pool identity travels as a separate `poolConfig` (matching backend create() /
+    // update() + the delegation callers). For a fresh pool it was just stored via
+    // addPool above; for an existing pool it is already in the store.
+    const poolConfig = store.getPool(poolId)?.config;
+
     console.log(surveyConfig)
 
     let surveyResponse: any = await fetch(`${BACKENDURL}/api/surveys`, {
@@ -177,7 +182,8 @@ export class NewSurveyController {
       body: JSON.stringify({  
         signature,
         userAddress,
-        surveyConfig
+        surveyConfig,
+        poolConfig
       })
     });
 
