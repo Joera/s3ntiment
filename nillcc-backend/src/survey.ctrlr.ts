@@ -87,10 +87,19 @@ export class SurveyController {
         const { safeConfigWithScoring, safeConfig, scoring } = stripScoring(survey);
         const _isScored = isScored(survey.groups);
 
-        const [ encryptedForOwner, encryptedForRespondent] = await Promise.all([
-            this.lit.encrypt(usage_api_key, poolConfig.pkpId, JSON.stringify(safeConfigWithScoring)),
-            this.lit.encrypt(usage_api_key, poolConfig.pkpId, JSON.stringify(safeConfig))
-        ])
+        // GUARD (PR #38): update is NOT the pool-identity enforcement point, so a
+        // partial/imported poolConfig may lack pkpId. Only PKP re-encrypt when a
+        // pkpId is available; otherwise the audience blobs are left unset and the
+        // rest of the updated config still uploads. This stops an unconditional
+        // poolConfig.pkpId dereference from 500-ing with a cryptic UPDATE_FAILED.
+        let encryptedForOwner;
+        let encryptedForRespondent;
+        if (poolConfig && poolConfig.pkpId) {
+            [encryptedForOwner, encryptedForRespondent] = await Promise.all([
+                this.lit.encrypt(usage_api_key, poolConfig.pkpId, JSON.stringify(safeConfigWithScoring)),
+                this.lit.encrypt(usage_api_key, poolConfig.pkpId, JSON.stringify(safeConfig))
+            ])
+        }
 
         const encryptedScoring = this.nildb.encryptToBuilder({scoring: scoring, groups: survey.groups});
 

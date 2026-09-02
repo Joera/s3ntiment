@@ -47,25 +47,59 @@ export function createApp(services: AppServices) {
   app.use(express.json({ limit: '10mb' }))
   app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
-  // ====== MIDDLEWARE ======
-
-  // Verify message signature — attaches isValidSignature to req.
-  // NOTE: intentionally NOT wired to any route in this PR. Auth wiring is a
-  // separate follow-up; this middleware is preserved verbatim (dead) so the
-  // decision point is explicit rather than silently removed.
-  async function verifySignature(req: Request, res: Response, next: NextFunction) {
-    const { signature, signer } = req.body;
-    if (!signature || !signer) {
-      res.status(401).json({ error: 'MISSING_SIGNATURE' });
-      return;
-    }
-    const message = req.body.message || `s3ntiment:${req.path}`;
-    const valid = await verifyMessage({ message, signature, address: signer });
-    if (!valid) {
-      res.status(401).json({ error: 'INVALID_SIGNATURE' });
-      return;
-    }
-    next();
+  // ====== AUTH MIDDLEWARE ======
+  //
+  // Signature verification for the mutating routes, wired to match the exact
+  // signing scheme the clients already use (reusing the pattern the /score and
+  // /lit/usage-key routes already apply inline: viem verifyMessage over the
+  // plain message string the caller signed). Every client signs a fixed string
+  // with its wallet (signMessage) and ships `signature` + the signer address in
+  // the request body. This middleware verifies that signature server-side before
+  // any side effect.
+  //
+  // Options:
+  //   messages      — the exact string (or strings) the caller must have signed.
+  //   addressField  — body field holding the signer address (default userAddress;
+  //                   note clients use `userAddress`, never the `signer` this
+  //                   dead middleware originally assumed).
+  //   authObject    — read signature/address from body.auth (results nests them).
+  function verifySignature({
+    messages,
+    addressField = 'userAddress',
+    authObject = false,
+  }: {
+    messages: string | string[];
+    addressField?: string;
+    authObject?: boolean;
+  }) {
+    const list = Array.isArray(messages) ? messages : [messages];
+    return async function (req: Request, res: Response, next: NextFunction) {
+      const src = authObject ? (req.body?.auth ?? {}) : (req.body ?? {});
+      const signature = src.signature;
+      const address = src[addressField];
+      if (!signature || !address) {
+        res.status(401).json({
+          error: 'MISSING_SIGNATURE',
+          message: `signature and ${addressField} are required`,
+        });
+        return;
+      }
+      let valid = false;
+      for (const message of list) {
+        if (await verifyMessage({ message, signature, address })) {
+          valid = true;
+          break;
+        }
+      }
+      if (!valid) {
+        res.status(401).json({
+          error: 'INVALID_SIGNATURE',
+          message: 'signature is not valid for the given address',
+        });
+        return;
+      }
+      next();
+    };
   }
 
   // ====== ROUTES ======
@@ -74,7 +108,7 @@ export function createApp(services: AppServices) {
 
   // --- Surveys ---
 
-  router.post('/pools', async (req: Request, res: Response) => {
+  router.post('/pools', verifySignature({ messages: 'Request owner invocation' }), async (req: Request, res: Response) => {
     if (badRequest(res, validatePoolCreate(req.body))) return;
     try {
       res.status(201).json(await pool.create(req.body));
@@ -86,7 +120,7 @@ export function createApp(services: AppServices) {
 
   // Create a new survey
   // Body: { signature, userAddress, surveyConfig, poolConfig, idempotencyKey? }
-  router.post('/surveys', async (req: Request, res: Response) => {
+  router.post('/surveys', verifySignature({ messages: 'Request owner invocation' }), async (req: Request, res: Response) => {
     if (badRequest(res, validateSurveyCreate(req.body))) return;
     try {
       const surveyCid = await survey.create(req.body);
@@ -115,7 +149,7 @@ export function createApp(services: AppServices) {
 
   // Update survey config and re-encrypt
   // Body: { survey, poolConfig, surveyConfig } — SURVEY_ID_MISMATCH is preserved.
-  router.put('/surveys/:id', async (req: Request, res: Response) => {
+  router.put('/surveys/:id', verifySignature({ messages: 'Request owner invocation' }), async (req: Request, res: Response) => {
     if (badRequest(res, validateSurveyUpdate(req.body, req.params.id))) return;
     try {
       const surveyCid = await survey.update(req.body);
@@ -166,12 +200,12 @@ export function createApp(services: AppServices) {
 
   // Get aggregated survey results (owner only)
   // Body: { auth, survey: queryIds, poolId, poolConfig }
-  router.post('/surveys/:id/results', async (req: Request, res: Response) => {
+  router.post('/surveys/:id/results', verifySignature({ messages: 'Request owner invocation', authObject: true }), async (req: Request, res: Response) => {
     if (badRequest(res, validateResults(req.body))) return;
     try {
       const surveyId = req.params.id;
       const contract = surveyStore.address;
-      const { auth, groups, survey, poolId, poolConfig } = req.body;
+      const { auth, survey, poolId, poolConfig } = req.body;
       const usageKey = await litPoolKeys.get(poolId);
       const nillPkp = new NillionPkpClient(lit, poolId, poolConfig.safe, contract)
 
@@ -187,7 +221,7 @@ export function createApp(services: AppServices) {
     }
   });
 
-  router.post('/surveys/:surveyId/delegation', async (req: Request, res: Response) => {
+  router.post('/surveys/:surveyId/delegation', verifySignature({ messages: ['s3ntiment:submit', 's3ntiment:migrate'] }), async (req: Request, res: Response) => {
     if (badRequest(res, validateDelegation(req.body))) return;
     const { surveyId } = req.params;
     const { userDid, signature, userAddress, poolId, poolConfig } = req.body;
@@ -199,7 +233,7 @@ export function createApp(services: AppServices) {
     res.json({ delegation });
   });
 
-  router.post('/builder/register', async (req: Request, res: Response) => {
+  router.post('/builder/register', verifySignature({ messages: 'Request owner invocation' }), async (req: Request, res: Response) => {
     if (badRequest(res, validateRegisterBuilder(req.body))) return;
     res.json(await pool.registerBuilder(req.body))
   });

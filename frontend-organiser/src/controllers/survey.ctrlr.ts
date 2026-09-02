@@ -332,16 +332,26 @@ export class SurveyController {
 
                 console.log("UPDATING WITH THIS", surveyConfig)
         
+                // The backend update route is auth-wired and consumes a canonical
+                // { signature, userAddress, survey, poolConfig } body (see
+                // nillcc-backend validation.ts validateSurveyUpdate). The pool
+                // config is read from the pool store so the re-encrypt can target
+                // the pool PKP; imported pools without a stored config are not
+                // updatable (no PKP to re-encrypt to) and will 400 at the boundary.
+                const signature = await this.services.safe.signMessage('Request owner invocation');
+                const userAddress = this.services.safe.getSignerAddress();
+                const poolConfig = this.pool.config;
+        
                 let res: any = await fetch(`${BACKENDURL}/api/surveys/${surveyId}`, {
                     method: 'PUT',
                     headers: {
                     'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({   
-                        surveyId,      
-                        surveyConfig,
-                        safeAddress: this.pool.config?.safe,
-                        poolId: existing.pool
+                        signature,
+                        userAddress,
+                        survey: surveyConfig,
+                        poolConfig
                     })
                 });
 
