@@ -1,5 +1,6 @@
 import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
+import { validateScore } from '@s3ntiment/shared';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
 import { loadAnchorAddressFromStorage } from '../state/storage.js';
@@ -80,10 +81,20 @@ export class CompletedController {
             const signer = this.services.account.getSignerAddress();
             const signature = await this.services.account.signMessage(`s3ntiment:score:${this.surveyId}`);
 
+            const scoreBody = { signer, signature, poolId: store.activeSurvey.pool };
+            // Producer-side boundary defense: a payload the backend would reject
+            // (400/401) is caught here and surfaced instead of sent.
+            const scoreFailure = validateScore(scoreBody);
+            if (scoreFailure) {
+                console.error('[nillcc-validation] score: payload would be rejected by backend', scoreFailure);
+                store.setUI({});
+                return;
+            }
+
             const response = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/score`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ signer, signature, poolId: store.activeSurvey.pool })
+                body: JSON.stringify(scoreBody)
             });
 
             if (response.ok) {

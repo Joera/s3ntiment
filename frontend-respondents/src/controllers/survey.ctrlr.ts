@@ -4,7 +4,7 @@ import '@s3ntiment/shared/components';
 import '../components/survey-questions.js';
 import { IServices } from '../services.js';
 import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
-import { fetchAndDecryptSurveyWithRespondent, isScored, PoolConfig, Survey } from '@s3ntiment/shared';
+import { fetchAndDecryptSurveyWithRespondent, isScored, PoolConfig, Survey, validateDelegation } from '@s3ntiment/shared';
 
 import { store } from '../state';
 import { createUserDataObject } from '@s3ntiment/shared'
@@ -143,6 +143,14 @@ export class SurveyController {
         userAddress: this.services.account.getSignerAddress(),
         poolId: this.survey?.pool, 
         poolConfig: this.poolConfig,
+      }
+
+      // Producer-side boundary defense: a payload the backend would reject
+      // (400/401) is caught here and surfaced instead of sent.
+      const delegationFailure = validateDelegation(args);
+      if (delegationFailure) {
+        console.error('[nillcc-validation] delegation submit: payload would be rejected by backend', delegationFailure);
+        return;
       }
 
       const { delegation } = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/delegation`, {

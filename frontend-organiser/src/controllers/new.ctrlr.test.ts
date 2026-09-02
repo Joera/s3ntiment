@@ -13,13 +13,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // on the Pool (GAP-3). fetch is stubbed per-URL so the full create-pool +
 // create-survey sequence runs against deterministic responses.
 
-vi.mock('@s3ntiment/shared', () => ({}));
+vi.mock('@s3ntiment/shared', () => ({
+  // The controller consumes nillcc request-validators from the canonical zod
+  // subpath (@s3ntiment/shared/nillcc), not the barrel — Batch/Survey are
+  // type-only imports here.
+}));
+// The zod seam (@s3ntiment/shared/nillcc) is canonical. Keep the REAL
+// validators (shared/dist must be built first — see nillcc-payloads.test.ts)
+// so the round-trip runs against real zod; only validatePoolCreateInput is
+// overridable so the fail-fast-before-fetch path can be forced below.
+vi.mock('@s3ntiment/shared/nillcc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@s3ntiment/shared/nillcc')>();
+  return { ...actual, validatePoolCreateInput: vi.fn() };
+});
 vi.mock('../components/draft-survey-editor.js', () => ({}));
 vi.mock('../factories/survey.factory.js', () => ({ createBatch: vi.fn() }));
 vi.mock('../services/services.js', () => ({}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
 
 import { NewSurveyController } from './new.ctrlr.ts.ts';
+import { validatePoolCreateInput } from '@s3ntiment/shared/nillcc';
 import { createBatch } from '../factories/survey.factory.js';
 import { router } from '../router.js';
 import { store } from '../state/store.js';
@@ -202,5 +215,39 @@ describe('NewSurveyController — create-survey payload contract', () => {
       litNetwork: 'datil-dev',
     });
     expect(body.surveyConfig.config).toBeUndefined();
+  });
+});
+
+describe('NewSurveyController — producer-side boundary validation (fail-fast)', () => {
+  it('aborts the pool create without sending when the zod input validator throws', async () => {
+    const services = fakeServices();
+    const ctrl = new NewSurveyController(services);
+
+    // Simulate a malformed pool payload (e.g. missing safeAddress): the zod
+    // validator (validatePoolCreateInput) throws and the fetch must never fire.
+    vi.mocked(validatePoolCreateInput).mockImplementationOnce(() => {
+      throw new Error(
+        'Pool create input validation failed:\nsafeAddress: safeAddress is required',
+      );
+    });
+
+    await expect(
+      (ctrl as any).handleSurveySubmit({
+        detail: {
+          survey: {
+            title: 'x',
+            introduction: 'y',
+            groups: [],
+            batches: [{ id: '', pool: '' }],
+          },
+        },
+      }),
+    ).rejects.toThrow('Pool create input validation failed');
+
+    const fetchMock = (globalThis as any).fetch;
+    const poolCall = fetchMock.mock.calls.find((c: any[]) =>
+      String(c[0]).includes('/api/pools'),
+    );
+    expect(poolCall).toBeUndefined();
   });
 });
