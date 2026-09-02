@@ -8,7 +8,7 @@ import '../components/survey-forms/pool-form-batches.js';
 import '../components/registered-questions-editor.js';
 import { router } from "../router.js";
 import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
-import {  fetchAndDecryptSurveyWithOwner, fetchLitApiKey, Pool, Survey } from "@s3ntiment/shared";
+import {  fetchAndDecryptSurveyWithOwner, fetchLitApiKey, Pool, Survey, validateResults, validateSurveyUpdate } from "@s3ntiment/shared";
 import { renderIcon } from "@s3ntiment/shared/assets";
 import '@s3ntiment/shared/components';
 
@@ -21,6 +21,15 @@ export class SurveyController {
     private survey!: Survey;
     private pool!: Pool;
     private cancelled = false;
+
+    // Producer-side boundary defense: a payload the nillcc backend would reject
+    // (400/401 — nillcc-backend/src/validation.ts + the #40 auth wiring) is
+    // caught HERE, before the fetch, and surfaced instead of sent.
+    private guardValid(failure: { error: string; message: string } | null, step: string): boolean {
+        if (!failure) return true;
+        console.error(`[nillcc-validation] ${step}: payload would be rejected by backend`, failure);
+        return false;
+    }
 
     constructor(services: IServices, surveyId: string) {
 
@@ -224,18 +233,24 @@ export class SurveyController {
             userAddress: this.services.safe.getSignerAddress()
         }
 
+        // Backend boundary expects the query-ids list under `survey` (array);
+        // the FE sources it from Survey.queryIds. `groups` is sent for the
+        // route's convenience and is not required by the boundary validator.
+        const resultsBody = {
+            auth,
+            survey: this.survey.queryIds,
+            poolId: this.survey.pool,
+            groups: this.survey.groups,
+            poolConfig: this.pool.config
+        };
+        if (!this.guardValid(validateResults(resultsBody), 'results')) return;
+
         const response = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/results`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ 
-                auth,
-                queryIds: this.survey.queryIds,
-                poolId: this.survey.pool,
-                groups: this.survey.groups,
-                poolConfig: this.pool.config 
-            })
+            body: JSON.stringify(resultsBody)
         });
 
         console.log(response);
@@ -331,18 +346,29 @@ export class SurveyController {
                 };
 
                 console.log("UPDATING WITH THIS", surveyConfig)
+
+                // The backend PUT boundary (PR #39 validateSurveyUpdate) expects
+                // { survey, poolConfig, surveyConfig } with surveyConfig.id === the
+                // URL id, and (post #40) requires signature + userAddress. The old
+                // body ({ surveyId, surveyConfig, safeAddress, poolId }) matched
+                // neither and was rejected/500'd by the backend.
+                const signature = await this.services.safe.signMessage('Request owner invocation');
+                const userAddress = this.services.safe.getSignerAddress();
+                const updateBody = {
+                    signature,
+                    userAddress,
+                    survey: surveyConfig,
+                    poolConfig: this.pool.config,
+                    surveyConfig: { id: surveyId },
+                };
+                if (!this.guardValid(validateSurveyUpdate(updateBody, surveyId), 'survey update')) return;
         
                 let res: any = await fetch(`${BACKENDURL}/api/surveys/${surveyId}`, {
                     method: 'PUT',
                     headers: {
                     'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({   
-                        surveyId,      
-                        surveyConfig,
-                        safeAddress: this.pool.config?.safe,
-                        poolId: existing.pool
-                    })
+                    body: JSON.stringify(updateBody)
                 });
 
                 const result = JSON.parse(await res.text());

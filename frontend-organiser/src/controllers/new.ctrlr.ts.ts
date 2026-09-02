@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 
-import { Batch, Survey } from '@s3ntiment/shared';
+import { Batch, Survey, validatePoolCreate, validateSurveyCreate, validateRegisterBuilder } from '@s3ntiment/shared';
 import '../components/draft-survey-editor.js';
 import { createBatch } from '../factories/survey.factory.js';
 import { IServices } from '../services/services.js';
@@ -31,6 +31,18 @@ export class NewSurveyController {
     `;
 
     this.setSurveyListener();
+  }
+
+  // Producer-side boundary defense: a payload the nillcc backend would reject
+  // (400/401 — see nillcc-backend/src/validation.ts + the #40 auth wiring) is
+  // caught HERE, before the fetch, and surfaced instead of sent. The backend
+  // remains the authority; this just makes it impossible to ship a malformed
+  // payload to the wire.
+  private guardValid(failure: { error: string; message: string } | null, step: string): boolean {
+    if (!failure) return true;
+    console.error(`[nillcc-validation] ${step}: payload would be rejected by backend`, failure);
+    store.setUI({ newStep: 'error' });
+    return false;
   }
 
   async process() {
@@ -75,6 +87,11 @@ export class NewSurveyController {
 
       store.setUI({ newStep: 'creating-pool' });
 
+      if (!this.guardValid(
+        validatePoolCreate({ signature, userAddress, poolId, safeAddress }),
+        'pools create',
+      )) return;
+
       let poolResponse: any = await fetch(`${BACKENDURL}/api/pools`, {
         method: 'POST',
         headers: {
@@ -111,6 +128,11 @@ export class NewSurveyController {
       console.log("create pool tx", res.receipt?.status);
 
       // register builder with nillion 
+      if (!this.guardValid(
+        validateRegisterBuilder({ signature, userAddress, poolId, pkpId, pkpDid, safeAddress }),
+        'builder/register',
+      )) return;
+
       let builderResponse: any = await fetch(`${BACKENDURL}/api/builder/register`, {
         method: 'POST',
         headers: {
@@ -173,6 +195,11 @@ export class NewSurveyController {
     const poolConfig = store.getPool(poolId)?.config;
 
     console.log(surveyConfig)
+
+    if (!this.guardValid(
+      validateSurveyCreate({ signature, userAddress, surveyConfig, poolConfig }),
+      'surveys create',
+    )) return;
 
     let surveyResponse: any = await fetch(`${BACKENDURL}/api/surveys`, {
       method: 'POST',

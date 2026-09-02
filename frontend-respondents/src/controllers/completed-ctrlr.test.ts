@@ -5,6 +5,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // `anchor_address === undefined` is exercised against the actual localStorage mock.
 
 vi.mock('@s3ntiment/shared/components', () => ({}));
+vi.mock('@s3ntiment/shared', () => ({
+  // CompletedController now consumes the shared nillcc request-validator
+  // (validateScore) on the scored-survey render path.
+  validateScore: vi.fn(() => null),
+}));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
 
 import { CompletedController } from './completed-ctrlr.js';

@@ -1,3 +1,5 @@
+import { throwOnFailure, validateUsageKey } from '../nillcc-validation.js';
+
 export async function fetchLitApiKey(
   backendUrl: string,
   userAddr: string,
@@ -5,6 +7,10 @@ export async function fetchLitApiKey(
   poolId: string,
   signal?: AbortSignal
 ): Promise<string> {
+
+  // Producer-side boundary defense: a payload the backend would reject is
+  // caught here, before the fetch, instead of sent.
+  throwOnFailure(validateUsageKey({ userAddr, signature, poolId }));
 
   const response: any = await fetch(`${backendUrl}/api/lit/usage-key`, {
     method: 'POST',

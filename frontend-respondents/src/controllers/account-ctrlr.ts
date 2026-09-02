@@ -21,6 +21,7 @@
 
 import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
+import { validateDelegation } from '@s3ntiment/shared';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
 import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
@@ -342,6 +343,13 @@ export class AccountController {
       poolId,
       poolConfig,
     };
+    // Producer-side boundary defense: a payload the backend would reject
+    // (400/401) is caught here and surfaced instead of sent.
+    const delegationFailure = validateDelegation(args);
+    if (delegationFailure) {
+      console.error('[nillcc-validation] delegation migrate: payload would be rejected by backend', delegationFailure);
+      return '';
+    }
     const res = await fetch(`${BACKENDURL}/api/surveys/${surveyId}/delegation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
