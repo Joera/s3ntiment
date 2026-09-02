@@ -65,8 +65,10 @@ function fakeServices() {
 
 // Per-URL fetch: the new-pool path POSTs /api/pools, /api/builder/register and
 // /api/surveys in sequence. Returns the pool identity from /api/pools, exactly
-// as the live backend does.
-function installBrowserGlobals() {
+// as the live backend does. Pass `failing` (array of URL substrings) to make a
+// given endpoint return a non-ok response with an error body — used to prove
+// the output validators are gated on res.ok and don't throw over a 4xx/5xx.
+function installBrowserGlobals(failing: string[] = []) {
   vi.stubGlobal('crypto', {
     randomUUID: vi
       .fn()
@@ -77,6 +79,12 @@ function installBrowserGlobals() {
     'fetch',
     vi.fn(async (url: any) => {
       const u = String(url);
+      if (failing.some((f) => u.includes(f))) {
+        // Real backend error body — deliberately NOT shaped like the success
+        // output, so if an output validator wrongly ran on it it would throw a
+        // misleading 'X output validation failed' zod error.
+        return { ok: false, json: async () => ({ error: 'backend rejected the request' }), text: async () => 'backend rejected the request' };
+      }
       if (u.includes('/api/pools')) {
         return {
           ok: true,
@@ -249,5 +257,89 @@ describe('NewSurveyController — producer-side boundary validation (fail-fast)'
       String(c[0]).includes('/api/pools'),
     );
     expect(poolCall).toBeUndefined();
+  });
+});
+
+describe('NewSurveyController — output validation gated on res.ok (regression)', () => {
+  // Regression for the audit finding: the output validators used to run
+  // UNCONDITIONALLY, so a real backend 4xx/5xx threw a misleading zod
+  // 'X output validation failed' error over the error body instead of
+  // surfacing the real backend error and stopping. Each site must now only run
+  // its output validator when res.ok === true, and follow its existing error
+  // path (set error UI / log) + return on a non-ok response.
+
+  // A brand-new-pool survey event: runs the full create-pool ->
+  // register-builder -> create-survey sequence, whichever endpoint fails.
+  function newPoolEvent() {
+    return {
+      detail: {
+        survey: {
+          title: 'How do you like coffee?',
+          introduction: 'Tell us',
+          groups: [{ id: 'g1', title: 'Taste', questions: [] }],
+          batches: [
+            {
+              id: '',
+              name: 'batch-1',
+              pool: '',
+              survey: '',
+              amount: 3,
+              medium: 'zip-file',
+              createdAt: 1724800000,
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  it('pool create: a non-ok /api/pools response sets error UI + returns without throwing a misleading output-validation error', async () => {
+    installBrowserGlobals(['/api/pools']);
+    const services = fakeServices();
+    const ctrl = new NewSurveyController(services);
+
+    // Must NOT reject: with the bug, validatePoolCreateOutput would throw a
+    // misleading zod error over the 4xx error body. It must instead follow the
+    // intended error path (setUI error) and stop.
+    await expect((ctrl as any).handleSurveySubmit(newPoolEvent())).resolves.toBeUndefined();
+
+    expect(store.ui.newStep).toBe('error');
+    const fetchMock = (globalThis as any).fetch;
+    // Nothing after the pool create may run: no builder register, no survey
+    // create, no navigation.
+    expect(fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/api/builder/register')).length).toBe(0);
+    expect(fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/api/surveys')).length).toBe(0);
+    expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('builder register: a non-ok /api/builder/register response logs + returns without throwing a misleading output-validation error', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    installBrowserGlobals(['/api/builder/register']);
+    const services = fakeServices();
+    const ctrl = new NewSurveyController(services);
+
+    // Must NOT reject: with the bug, validateRegisterBuilderOutput would throw
+    // a misleading zod error over the 4xx error body. It must instead log and stop.
+    await expect((ctrl as any).handleSurveySubmit(newPoolEvent())).resolves.toBeUndefined();
+
+    expect(logSpy).toHaveBeenCalledWith('builder registration failed');
+    const fetchMock = (globalThis as any).fetch;
+    // Survey create must never run after a failed builder register.
+    expect(fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/api/surveys')).length).toBe(0);
+    expect(router.navigate).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it('survey create: a non-ok /api/surveys response sets error UI + returns without throwing a misleading output-validation error', async () => {
+    installBrowserGlobals(['/api/surveys']);
+    const services = fakeServices();
+    const ctrl = new NewSurveyController(services);
+
+    // Must NOT reject: with the bug, validateSurveyCreateOutput would throw a
+    // misleading zod error over the 4xx error body. It must instead set error UI and stop.
+    await expect((ctrl as any).handleSurveySubmit(newPoolEvent())).resolves.toBeUndefined();
+
+    expect(store.ui.newStep).toBe('error');
+    expect(router.navigate).not.toHaveBeenCalled();
   });
 });
