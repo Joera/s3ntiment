@@ -34,6 +34,7 @@ vi.mock('./services/nildb.pkp.service.js', () => ({
 }));
 
 import { createApp } from './app.js';
+import { verifyMessage } from 'viem';
 
 // ---- Ephemeral-server helper: bind the app to port 0, exercise it over real
 // HTTP (Node's built-in fetch — no supertest dep), then tear it down.
@@ -108,6 +109,9 @@ function makeApp() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // restore the default verifyMessage implementation (clearAllMocks does not
+  // reset implementations, so an auth test that flips it to false would leak).
+  vi.mocked(verifyMessage).mockResolvedValue(true);
   h.clientInstances.length = 0;
 });
 
@@ -215,11 +219,13 @@ describe('POST /api/surveys — boundary validation', () => {
 
   it('400s with MISSING_FIELD when a required top-level field is absent', async () => {
     const { deps, app } = makeApp();
-    const { signature, ...rest } = valid;
+    // signature/userAddress are now auth-covered (401 before validation), so a
+    // missing surveyConfig is what reaches the boundary validator.
+    const { surveyConfig, ...rest } = valid;
     await withServer(app, async (base) => {
       const res = await post(base, '/api/surveys', rest);
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'MISSING_FIELD', message: 'missing signature' });
+      expect(res.body).toEqual({ error: 'MISSING_FIELD', message: 'missing surveyConfig' });
       expect(deps.survey.create).not.toHaveBeenCalled();
     });
   });
@@ -251,12 +257,13 @@ describe('POST /api/surveys — boundary validation', () => {
 
 describe('PUT /api/surveys/:id — boundary validation', () => {
   const valid = {
-    surveyConfig: { id: 'survey-1' },
+    signature: 'sig-1',
+    userAddress: '0xUser',
     survey: { id: 'survey-1', pool: '0xpool', groups: [], queryIds: ['q-1'] },
     poolConfig: { safe: '0xSafe' }, // deliberately NOT a full config (PR #38)
   };
 
-  it('400s with SURVEY_ID_MISMATCH when body surveyConfig.id does not match the URL id', async () => {
+  it('400s with SURVEY_ID_MISMATCH when body survey.id does not match the URL id', async () => {
     const { deps, app } = makeApp();
     await withServer(app, async (base) => {
       const res = await put(base, '/api/surveys/other-id', valid);
@@ -266,9 +273,9 @@ describe('PUT /api/surveys/:id — boundary validation', () => {
     });
   });
 
-  it('400s with SURVEY_ID_MISMATCH when surveyConfig is absent (preserved guard)', async () => {
+  it('400s with SURVEY_ID_MISMATCH when survey is absent (preserved guard)', async () => {
     const { deps, app } = makeApp();
-    const { surveyConfig, ...rest } = valid;
+    const { survey, ...rest } = valid;
     await withServer(app, async (base) => {
       const res = await put(base, '/api/surveys/survey-1', rest);
       expect(res.status).toBe(400);
@@ -277,13 +284,16 @@ describe('PUT /api/surveys/:id — boundary validation', () => {
     });
   });
 
-  it('400s with MISSING_FIELD when survey is absent', async () => {
+  it('400s with MISSING_FIELD when survey is absent but survey.id present elsewhere', async () => {
     const { deps, app } = makeApp();
     const { survey, ...rest } = valid;
+    const withOnlySurveyConfig = { ...rest, surveyConfig: { id: 'survey-1' } };
     await withServer(app, async (base) => {
-      const res = await put(base, '/api/surveys/survey-1', rest);
+      // surveyConfig is no longer the survey carrier — `survey` is missing, so
+      // the id check (survey.id) also trips first.
+      const res = await put(base, '/api/surveys/survey-1', withOnlySurveyConfig);
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'MISSING_FIELD', message: 'missing survey' });
+      expect(res.body.error).toBe('SURVEY_ID_MISMATCH');
       expect(deps.survey.update).not.toHaveBeenCalled();
     });
   });
@@ -363,7 +373,7 @@ describe('POST /api/surveys/:id/score — boundary validation', () => {
 
 describe('POST /api/surveys/:id/results — boundary validation', () => {
   const valid = {
-    auth: { sig: 'auth-sig' },
+    auth: { signature: 'sig-1', userAddress: '0xUser' },
     survey: ['query-1'],
     poolId: '0xpool',
     poolConfig: { safe: '0xSafe' },
@@ -593,6 +603,200 @@ describe('POST /api/lit/usage-key — boundary validation', () => {
         address: '0xUser',
         message: 'Request capability to decrypt',
         signature: 'sig-1',
+      });
+      expect(deps.litPoolKeys.get).toHaveBeenCalledWith('0xpool');
+    });
+  });
+});
+
+// ====== AUTH WIRING ======
+//
+// The mutating routes (pools, surveys create/update, results, delegation,
+// builder/register) now run the verifySignature middleware before any side
+// effect. score and lit/usage-key already verified signatures inline and are
+// left untouched. Each route's happy-path suite above already proves a valid
+// signature+address passes through to the handler; here we cover the two
+// rejection branches (missing material -> 401, invalid signature -> 401) plus
+// that the handler is never reached on either.
+
+describe('AUTH — signature verification on mutating routes', () => {
+  // A valid body for each wired route (signature + the address field the
+  // middleware reads). `verifyMessage` is mocked true in this suite, so a
+  // present signature/address always verifies.
+  const cases: Array<{ name: string; method: string; path: string; valid: any }> = [
+    {
+      name: 'POST /api/pools',
+      method: 'POST',
+      path: '/api/pools',
+      valid: { signature: 'sig-1', userAddress: '0xUser', poolId: '0xpool', safeAddress: '0xSafe' },
+    },
+    {
+      name: 'POST /api/surveys',
+      method: 'POST',
+      path: '/api/surveys',
+      valid: {
+        signature: 'sig-1',
+        userAddress: '0xUser',
+        surveyConfig: { id: 'survey-1', pool: '0xpool' },
+        poolConfig: { pkpId: 'pkp-1', pkpDid: 'did:key:1', safe: '0xSafe' },
+      },
+    },
+    {
+      name: 'PUT /api/surveys/:id',
+      method: 'PUT',
+      path: '/api/surveys/survey-1',
+      valid: {
+        signature: 'sig-1',
+        userAddress: '0xUser',
+        survey: { id: 'survey-1', pool: '0xpool', groups: [], queryIds: ['q-1'] },
+        poolConfig: { safe: '0xSafe' },
+      },
+    },
+    {
+      name: 'POST /api/surveys/:id/results',
+      method: 'POST',
+      path: '/api/surveys/survey-1/results',
+      valid: {
+        auth: { signature: 'sig-1', userAddress: '0xUser' },
+        survey: ['query-1'],
+        poolId: '0xpool',
+        poolConfig: { safe: '0xSafe' },
+      },
+    },
+    {
+      name: 'POST /api/surveys/:id/delegation',
+      method: 'POST',
+      path: '/api/surveys/survey-1/delegation',
+      valid: {
+        userDid: 'did:key:user',
+        signature: 'sig-1',
+        userAddress: '0xUser',
+        poolId: '0xpool',
+        poolConfig: { safe: '0xSafe', pkpId: 'pkp-1', pkpDid: 'did:key:pkp1' },
+      },
+    },
+    {
+      name: 'POST /api/builder/register',
+      method: 'POST',
+      path: '/api/builder/register',
+      valid: {
+        signature: 'sig-1',
+        userAddress: '0xUser',
+        poolId: '0xpool',
+        pkpId: 'pkp-1',
+        pkpDid: 'did:key:pkp1',
+        safeAddress: '0xSafe',
+      },
+    },
+  ];
+
+  it.each(cases)(
+    '401s with MISSING_SIGNATURE when $name has no signature/address, before any side effect',
+    async ({ method, path, valid }) => {
+      const { deps, app } = makeApp();
+      await withServer(app, async (base) => {
+        // results nests the auth material inside body.auth — strip it there too.
+        const body = structuredClone(valid);
+        const target = body.auth && typeof body.auth === 'object' ? body.auth : body;
+        delete target.signature;
+        delete target.userAddress;
+        const res = await send(method, base, path, body);
+        expect(res.status).toBe(401);
+        expect(res.body.error).toBe('MISSING_SIGNATURE');
+        // no service was reached
+        expect(
+          [
+            deps.pool.create,
+            deps.pool.registerBuilder,
+            deps.survey.create,
+            deps.survey.update,
+            deps.survey.getUserDelegation,
+            deps.litPoolKeys.get,
+          ].every((fn) => !fn.mock.calls.length),
+        ).toBe(true);
+      });
+    },
+  );
+
+  it.each(cases)(
+    '401s with INVALID_SIGNATURE when $name carries an invalid signature, before any side effect',
+    async ({ method, path, valid }) => {
+      const { deps, app } = makeApp();
+      // persistent false: delegation's middleware loops over two messages, so a
+      // single once-false would let the second message verify through.
+      vi.mocked(verifyMessage).mockResolvedValue(false);
+      await withServer(app, async (base) => {
+        const res = await send(method, base, path, valid);
+        expect(res.status).toBe(401);
+        expect(res.body.error).toBe('INVALID_SIGNATURE');
+        expect(
+          [
+            deps.pool.create,
+            deps.pool.registerBuilder,
+            deps.survey.create,
+            deps.survey.update,
+            deps.survey.getUserDelegation,
+            deps.litPoolKeys.get,
+          ].every((fn) => !fn.mock.calls.length),
+        ).toBe(true);
+      });
+    },
+  );
+
+  it('passes a valid signed payload through POST /api/pools to the handler (201)', async () => {
+    const { deps, app } = makeApp();
+    await withServer(app, async (base) => {
+      const res = await post(base, '/api/pools', {
+        signature: 'sig-1',
+        userAddress: '0xUser',
+        poolId: '0xpool',
+        safeAddress: '0xSafe',
+      });
+      expect(res.status).toBe(201);
+      expect(verifyMessage).toHaveBeenCalledWith({
+        message: 'Request owner invocation',
+        signature: 'sig-1',
+        address: '0xUser',
+      });
+      expect(deps.pool.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('passes a valid signed delegation payload (verifying against the submit/migrate messages)', async () => {
+    const { deps, app } = makeApp();
+    await withServer(app, async (base) => {
+      const res = await post(base, '/api/surveys/survey-1/delegation', {
+        userDid: 'did:key:user',
+        signature: 'sig-1',
+        userAddress: '0xUser',
+        poolId: '0xpool',
+        poolConfig: { safe: '0xSafe', pkpId: 'pkp-1', pkpDid: 'did:key:pkp1' },
+      });
+      expect(res.status).toBe(200);
+      // the middleware tries s3ntiment:submit first, then s3ntiment:migrate
+      expect(verifyMessage).toHaveBeenNthCalledWith(1, {
+        message: 's3ntiment:submit',
+        signature: 'sig-1',
+        address: '0xUser',
+      });
+      expect(deps.survey.getUserDelegation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('passes a valid signed results payload (reading auth from body.auth)', async () => {
+    const { deps, app } = makeApp();
+    await withServer(app, async (base) => {
+      const res = await post(base, '/api/surveys/survey-1/results', {
+        auth: { signature: 'sig-1', userAddress: '0xUser' },
+        survey: ['query-1'],
+        poolId: '0xpool',
+        poolConfig: { safe: '0xSafe' },
+      });
+      expect(res.status).toBe(200);
+      expect(verifyMessage).toHaveBeenCalledWith({
+        message: 'Request owner invocation',
+        signature: 'sig-1',
+        address: '0xUser',
       });
       expect(deps.litPoolKeys.get).toHaveBeenCalledWith('0xpool');
     });

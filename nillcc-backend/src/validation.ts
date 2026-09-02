@@ -142,23 +142,27 @@ export function validateSurveyCreate(body: unknown): ValidationFailure | null {
   return null;
 }
 
-// PUT /api/surveys/:id — SurveyController.update({ survey, poolConfig })
-// Preserves the SURVEY_ID_MISMATCH guard (URL id vs body.surveyConfig.id) and its
-// error code. `survey` and `poolConfig` must be objects, but per PR #38 the
-// pool config fields are NOT required here — the update path is not the pool
-// identity enforcement point.
+// PUT /api/surveys/:id — SurveyController.update({ signature, userAddress, survey, poolConfig })
+// Preserves the SURVEY_ID_MISMATCH guard (URL id vs body.survey.id) and its error
+// code. `survey` and `poolConfig` must be objects, but per PR #38 the pool config
+// fields are NOT required here — the update path is not the pool identity
+// enforcement point. `signature`/`userAddress` are required because the update
+// route is auth-wired (the controller re-encrypts for the pool PKP on the caller's
+// behalf), mirroring the create path.
 export function validateSurveyUpdate(body: unknown, id: string): ValidationFailure | null {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'INVALID_BODY', message: 'request body must be a JSON object' };
   }
   const record = body as Record<string, any>;
-  if (record.surveyConfig?.id !== id) {
+  if (record.survey?.id !== id) {
     return {
       error: 'SURVEY_ID_MISMATCH',
-      message: 'surveyConfig.id must match the survey id in the URL',
+      message: 'survey.id must match the survey id in the URL',
     };
   }
   return validateBody(record, {
+    signature: { required: true, type: 'string' },
+    userAddress: { required: true, type: 'string' },
     survey: { required: true, type: 'object' },
     poolConfig: { required: true, type: 'object' },
   });

@@ -229,6 +229,35 @@ describe('SurveyController.update', () => {
     expect(uploaded.queryIds).toEqual(['q-1']);
     expect(uploaded.isScored).toBe(true);
   });
+
+  it('tolerates a partial poolConfig (no pkpId) without 500-ing — PR #38 guard (real controller)', async () => {
+    const deps = fakeDeps();
+    const ctrl = new SurveyController(
+      deps.nildb,
+      deps.lit,
+      deps.litPoolKeys,
+      deps.ipfs,
+      deps.viem,
+    );
+    const survey = { id: SURVEY_ID, pool: POOL_ID, groups: [], queryIds: ['q-1'] };
+    // Objects-only poolConfig per PR #38 — no pkpId, so the PKP re-encrypt must
+    // be guarded rather than dereferenced unconditionally (previously this threw
+    // and the route 500'd with a cryptic UPDATE_FAILED).
+    const poolConfig = { safe: '0xSafE' };
+
+    const cid = await ctrl.update({ survey, poolConfig });
+
+    // completes, uploads, but never attempts a PKP re-encrypt
+    expect(cid).toBe(CID);
+    expect(deps.litPoolKeys.get).toHaveBeenCalledWith(POOL_ID);
+    expect(deps.lit.encrypt).not.toHaveBeenCalled();
+    expect(deps.nildb.encryptToBuilder).toHaveBeenCalledTimes(1);
+
+    const uploaded = JSON.parse((deps.ipfs.uploadToPinata as any).mock.calls[0][0]);
+    expect(uploaded.surveyId).toBe(SURVEY_ID);
+    expect(uploaded.encryptedForOwner).toBeUndefined();
+    expect(uploaded.encryptedForRespondent).toBeUndefined();
+  });
 });
 
 describe('SurveyController.get', () => {
