@@ -1,7 +1,16 @@
 /// <reference types="vite/client" />
 
 
-import { Batch, Survey, validatePoolCreate, validateSurveyCreate, validateRegisterBuilder } from '@s3ntiment/shared';
+import { Batch, Survey } from '@s3ntiment/shared';
+import {
+  validatePoolCreateInput,
+  validatePoolCreateOutput,
+  validateRegisterBuilderInput,
+  validateRegisterBuilderOutput,
+  validateSurveyCreateInput,
+  validateSurveyCreateOutput,
+} from '@s3ntiment/shared/nillcc';
+import { buildPoolCreatePayload, buildRegisterBuilderPayload, buildSurveyCreatePayload } from './nillcc-payloads.js';
 import '../components/draft-survey-editor.js';
 import { createBatch } from '../factories/survey.factory.js';
 import { IServices } from '../services/services.js';
@@ -31,18 +40,6 @@ export class NewSurveyController {
     `;
 
     this.setSurveyListener();
-  }
-
-  // Producer-side boundary defense: a payload the nillcc backend would reject
-  // (400/401 — see nillcc-backend/src/validation.ts + the #40 auth wiring) is
-  // caught HERE, before the fetch, and surfaced instead of sent. The backend
-  // remains the authority; this just makes it impossible to ship a malformed
-  // payload to the wire.
-  private guardValid(failure: { error: string; message: string } | null, step: string): boolean {
-    if (!failure) return true;
-    console.error(`[nillcc-validation] ${step}: payload would be rejected by backend`, failure);
-    store.setUI({ newStep: 'error' });
-    return false;
   }
 
   async process() {
@@ -87,27 +84,27 @@ export class NewSurveyController {
 
       store.setUI({ newStep: 'creating-pool' });
 
-      if (!this.guardValid(
-        validatePoolCreate({ signature, userAddress, poolId, safeAddress }),
-        'pools create',
-      )) return;
+      // Pool create — payload shaped + zod-validated (fast-fail) before the
+      // round-trip so a mis-typed body never reaches the backend.
+      const poolPayload = buildPoolCreatePayload({ signature, userAddress, poolId, safeAddress });
+      validatePoolCreateInput(poolPayload);
 
       let poolResponse: any = await fetch(`${BACKENDURL}/api/pools`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({   
-          signature,
-          userAddress,
-          poolId,
-          safeAddress
-        })
+        body: JSON.stringify(poolPayload)
       });
 
       if (!poolResponse.ok) store.setUI({ newStep: 'error' });
 
-      const { pkpId, pkpDid, groupId, delegation }  = await poolResponse.json();
+      const poolData = await poolResponse.json();
+      // Output conformance: the pool identity the backend minted must keep the
+      // contract the FE derefs below (pkpId / pkpDid / groupId).
+      validatePoolCreateOutput(poolData);
+
+      const { pkpId, pkpDid, groupId } = poolData;
 
       // CREATE INVITES
       store.setUI({ newStep: 'creating-invites' });
@@ -127,28 +124,22 @@ export class NewSurveyController {
       const res = await this.services.safe.write(surveyStore.address, surveyStore.abi, 'createSurvey', args, { waitForReceipt: true });
       console.log("create pool tx", res.receipt?.status);
 
-      // register builder with nillion 
-      if (!this.guardValid(
-        validateRegisterBuilder({ signature, userAddress, poolId, pkpId, pkpDid, safeAddress }),
-        'builder/register',
-      )) return;
+      // Register builder — payload shaped + zod-validated (fast-fail) before
+      // the round-trip.
+      const builderPayload = buildRegisterBuilderPayload({ signature, userAddress, poolId, pkpId, pkpDid, safeAddress });
+      validateRegisterBuilderInput(builderPayload);
 
       let builderResponse: any = await fetch(`${BACKENDURL}/api/builder/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({   
-          signature, 
-          userAddress, 
-          poolId, 
-          pkpId, 
-          pkpDid, 
-          safeAddress
-        })
+        body: JSON.stringify(builderPayload)
       });
 
       if (!builderResponse.ok) console.log("builder registration failed") 
+
+      validateRegisterBuilderOutput(await builderResponse.json());
 
       const config = {
         safe: safeAddress,
@@ -196,27 +187,26 @@ export class NewSurveyController {
 
     console.log(surveyConfig)
 
-    if (!this.guardValid(
-      validateSurveyCreate({ signature, userAddress, surveyConfig, poolConfig }),
-      'surveys create',
-    )) return;
+    // Survey create — payload shaped + zod-validated (fast-fail) before the
+    // round-trip; poolConfig must carry pkpId / pkpDid / safe or the create
+    // boundary rejects it (MISSING_POOL_CONFIG).
+    const surveyPayload = buildSurveyCreatePayload({ signature, userAddress, surveyConfig, poolConfig });
+    validateSurveyCreateInput(surveyPayload);
 
     let surveyResponse: any = await fetch(`${BACKENDURL}/api/surveys`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({  
-        signature,
-        userAddress,
-        surveyConfig,
-        poolConfig
-      })
+      body: JSON.stringify(surveyPayload)
     });
 
     if (!surveyResponse.ok) store.setUI({ newStep: 'error' });
 
-    const { cid }  = await surveyResponse.json();
+    const surveyData = await surveyResponse.json();
+    // Output conformance: the create boundary returns { cid }.
+    validateSurveyCreateOutput(surveyData);
+    const { cid } = surveyData;
 
     if (this.services.ipfs.isCID(cid)) {
 
