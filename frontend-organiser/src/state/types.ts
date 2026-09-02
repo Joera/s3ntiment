@@ -1,4 +1,8 @@
-import { Batch, Pool, Survey } from "@s3ntiment/shared";
+import { Survey } from "@s3ntiment/shared";
+// Map aliases are canonical in @s3ntiment/shared (single declaration site — see
+// the type-drift consolidation PR); re-exported here so organiser modules can
+// keep importing maps from the local state types module without re-declaring.
+export type { SurveysMap, PoolsMap, BatchesMap } from "@s3ntiment/shared";
 
 export interface DraftMeta {
   config: Survey;
@@ -8,18 +12,6 @@ export interface DraftMeta {
 
 export interface DraftsMap {
   [id: string]: DraftMeta;
-}
-
-export interface SurveysMap {
-  [id: string]: Survey;
-}
-
-export interface PoolsMap {
-  [id: string]: Pool;
-}
-
-export interface BatchesMap {
-  [id: string]: Batch;
 }
 
 export interface UIState {

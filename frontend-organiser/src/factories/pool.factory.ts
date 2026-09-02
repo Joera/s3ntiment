@@ -31,6 +31,17 @@ export const getPoolInfo = async (services:IServices, poolId: string) : Promise<
             batches,
             owners,
             readers: [],
-            createdAt: Number(createdAt)
+            createdAt: Number(createdAt),
+            // Partial config: a pool imported purely from on-chain data cannot
+            // know its Lit PKP/group identity (pkpId/pkpDid/groupId are minted
+            // at creation and returned only by POST /api/pools to the creating
+            // organiser — never persisted on-chain). Only the Safe + network
+            // identity are derivable here, so we populate exactly those. See
+            // the type-drift consolidation PR decision record.
+            config: {
+                safe: safeAddress,
+                chainId: import.meta.env.VITE_L2 == 'base' ? 8453 : 1,
+                litNetwork: import.meta.env.VITE_LIT_NETWORK,
+            }
     }
 }

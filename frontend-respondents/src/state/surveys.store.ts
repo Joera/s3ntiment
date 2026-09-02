@@ -1,12 +1,6 @@
 import { Observable, Listener } from './observable.js';
-import { Survey } from '@s3ntiment/shared';
+import { Survey, SurveyEntry, SurveyMap } from '@s3ntiment/shared';
 import { loadSurveysFromStorage, saveSurveysToStorage, clearSurveysFromStorage } from './storage.js';
-
-export interface SurveyEntry extends Survey {
-  answeredQuestions: number[];
-}
-
-export type SurveyMap = Record<string, SurveyEntry>;
 
 export class SurveysStore {
   private observable: Observable<SurveyMap>;
