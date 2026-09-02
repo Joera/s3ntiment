@@ -2,7 +2,7 @@
 
 **Branch:** `deepseek/nillcc-auth-wiring`
 **Base:** `nillcc/backend-validation` (PR #39 head `84ba1ccc5`)
-**PR:** #41 (this report)
+**PR:** #40 (this report)
 **Date:** 2026-09-02
 
 ## Context / base decision
