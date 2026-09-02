@@ -1,6 +1,6 @@
 import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
-import { validateScore } from '@s3ntiment/shared';
+import { validateScoreInput } from '@s3ntiment/shared';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
 import { loadAnchorAddressFromStorage } from '../state/storage.js';
@@ -83,10 +83,13 @@ export class CompletedController {
 
             const scoreBody = { signer, signature, poolId: store.activeSurvey.pool };
             // Producer-side boundary defense: a payload the backend would reject
-            // (400/401) is caught here and surfaced instead of sent.
-            const scoreFailure = validateScore(scoreBody);
-            if (scoreFailure) {
-                console.error('[nillcc-validation] score: payload would be rejected by backend', scoreFailure);
+            // (400/401) is caught here and surfaced instead of sent. validateScoreInput
+            // throws on failure (canonical zod module); we catch + log + abort exactly
+            // like the previous hand-rolled log-and-return path.
+            try {
+                validateScoreInput(scoreBody);
+            } catch (e) {
+                console.error('[nillcc] score: payload would be rejected by backend', e);
                 store.setUI({});
                 return;
             }

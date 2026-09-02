@@ -21,7 +21,7 @@
 
 import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
-import { validateDelegation } from '@s3ntiment/shared';
+import { validateDelegationInput } from '@s3ntiment/shared';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
 import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
@@ -344,10 +344,13 @@ export class AccountController {
       poolConfig,
     };
     // Producer-side boundary defense: a payload the backend would reject
-    // (400/401) is caught here and surfaced instead of sent.
-    const delegationFailure = validateDelegation(args);
-    if (delegationFailure) {
-      console.error('[nillcc-validation] delegation migrate: payload would be rejected by backend', delegationFailure);
+    // (400/401) is caught here and surfaced instead of sent. validateDelegationInput
+    // throws on failure (canonical zod module); we catch + log + continue ('' )
+    // exactly like the previous hand-rolled log-and-continue path.
+    try {
+      validateDelegationInput(args);
+    } catch (e) {
+      console.error('[nillcc] delegation migrate: payload would be rejected by backend', e);
       return '';
     }
     const res = await fetch(`${BACKENDURL}/api/surveys/${surveyId}/delegation`, {

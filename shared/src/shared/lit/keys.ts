@@ -1,4 +1,4 @@
-import { throwOnFailure, validateUsageKey } from '../nillcc-validation.js';
+import { validateUsageKeyInput } from '../nillcc/index.js';
 
 export async function fetchLitApiKey(
   backendUrl: string,
@@ -9,8 +9,9 @@ export async function fetchLitApiKey(
 ): Promise<string> {
 
   // Producer-side boundary defense: a payload the backend would reject is
-  // caught here, before the fetch, instead of sent.
-  throwOnFailure(validateUsageKey({ userAddr, signature, poolId }));
+  // caught here, before the fetch, instead of sent. validateUsageKeyInput
+  // throws (canonical zod module).
+  validateUsageKeyInput({ userAddr, signature, poolId });
 
   const response: any = await fetch(`${backendUrl}/api/lit/usage-key`, {
     method: 'POST',
