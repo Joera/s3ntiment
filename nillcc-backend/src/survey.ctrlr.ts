@@ -186,7 +186,15 @@ export class SurveyController {
         const usageKey = await this.litPoolKeys.get(poolId);
         const survey = await fetchSurveyAndParseCid( { viem: this.viem, ipfs: this.ipfs }, deployment, surveyId)
 
-        const nillPkp = new NillionPkpClient(this.lit, survey.poolId, poolConfig.safe!, contract)
+        // Bug B (audit survey-delegation-502): the PKP client's pool identity was
+        // sourced from `survey.poolId` — a field the create() path NEVER writes to
+        // the IPFS config (it spreads the Survey object carrying `pool`, no
+        // `poolId`; only update() writes poolId). With survey.poolId === undefined
+        // the delegation action code baked in isPoolMember('undefined', ...),
+        // producing an action CID no usage key permits -> Lit 403 -> 502. The
+        // REQUEST poolId (already a validated, non-optional param) is the pool the
+        // action was registered for at creation; source the client from it instead.
+        const nillPkp = new NillionPkpClient(this.lit, poolId, poolConfig.safe!, contract)
         return await nillPkp.getUserWriteDelegation(signature, userAddress, surveyId, userDid, poolId, usageKey, poolConfig.pkpId!, poolConfig.pkpDid!);
     }
 }
