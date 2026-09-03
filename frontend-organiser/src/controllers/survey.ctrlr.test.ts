@@ -160,3 +160,63 @@ describe('SurveyController — survey update output validation gated on res.ok (
     errorSpy.mockRestore();
   });
 });
+
+describe('SurveyController — results output validation gated on res.ok (regression)', () => {
+  // refreshResponses() derefs this.survey (queryIds/groups/pool) and
+  // this.pool.config; seed both directly on the controller.
+  function resultsController(services: any, fetchImpl: any) {
+    const ctrl = setupController(services, fetchImpl);
+    (ctrl as any).survey = {
+      id: SURVEY_ID,
+      pool: POOL_ID,
+      groups: [{ id: 'g1', title: 'Taste', questions: [] }],
+      queryIds: ['q-1'],
+    };
+    return ctrl;
+  }
+
+  it('ok response with a valid { results } body: results assigned + survey stored', async () => {
+    const services = fakeServices();
+    const ctrl = resultsController(services, async () => ({
+      ok: true,
+      text: async () => '',
+      json: async () => ({ results: [{ id: 'r1' }] }),
+    }));
+
+    await ctrl.refreshResponses();
+
+    // The real { results } response shape passes validation and flows through
+    // to the survey object + the store.
+    expect((ctrl as any).survey.results).toEqual([{ id: 'r1' }]);
+    expect(store.surveys.find((s: any) => s.id === SURVEY_ID)?.results).toEqual([{ id: 'r1' }]);
+  });
+
+  it('ok response with a WRONG shape (missing results): fails loudly (real validator)', async () => {
+    const services = fakeServices();
+    const ctrl = resultsController(services, async () => ({
+      ok: true,
+      text: async () => '',
+      json: async () => ({ foo: 'bar' }),
+    }));
+
+    // The REAL validateResultsOutput throws on the malformed body — genuine
+    // teeth against a wrong response shape.
+    await expect(ctrl.refreshResponses()).rejects.toThrow(/Results output validation failed/);
+  });
+
+  it('non-ok response: surfaces the real backend error and stops, WITHOUT a misleading output-validation error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const services = fakeServices();
+    const ctrl = resultsController(services, async () => ({
+      ok: false,
+      text: async () => JSON.stringify({ error: 'results rejected' }),
+    }));
+
+    // Must NOT reject — the real backend error is surfaced (logged) and the
+    // handler stops before the output validator ever runs.
+    await expect(ctrl.refreshResponses()).resolves.toBeUndefined();
+    expect((ctrl as any).survey.results).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+});

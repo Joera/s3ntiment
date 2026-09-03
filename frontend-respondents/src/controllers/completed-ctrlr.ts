@@ -1,6 +1,6 @@
 import { reactive } from '../utils/reactive.js';
 import '@s3ntiment/shared/components';
-import { validateScoreInput } from '@s3ntiment/shared';
+import { validateScoreInput, validateScoreOutput } from '@s3ntiment/shared';
 import { IServices } from '../services.js';
 import { store } from '../state/store.js';
 import { loadAnchorAddressFromStorage } from '../state/storage.js';
@@ -102,6 +102,9 @@ export class CompletedController {
 
             if (response.ok) {
                 const r: any = await response.json();
+                // Output conformance: the score boundary returns { score }. Runs
+                // only on an ok response; a wrong shape fails loudly.
+                validateScoreOutput(r);
                 this.score = r.score;
             } else {
                 console.log("ERROR", response);

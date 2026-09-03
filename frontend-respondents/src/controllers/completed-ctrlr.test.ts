@@ -9,6 +9,15 @@ vi.mock('@s3ntiment/shared', () => ({
   // CompletedController now consumes the shared zod nillcc request-validator
   // (validateScoreInput) on the scored-survey render path.
   validateScoreInput: vi.fn((input: any) => input),
+  // …and the shared zod nillcc RESPONSE-validator (validateScoreOutput) on the
+  // scored path; stubbed with real teeth (throws on a body missing `score`) so
+  // a wrong response shape fails the regression test.
+  validateScoreOutput: vi.fn((body: any) => {
+    if (!body || typeof body.score === 'undefined') {
+      throw new Error('Score output validation failed: score: score is required');
+    }
+    return body;
+  }),
 }));
 vi.mock('../router.js', () => ({ router: { navigate: vi.fn() } }));
 
@@ -96,5 +105,56 @@ describe('CompletedController — "secure your stealth account" CTA', () => {
     expect(viewA.destroy).toHaveBeenCalledTimes(1);
     expect(viewB.destroy).toHaveBeenCalledTimes(1);
     expect((ctrl as any).reactiveViews).toEqual([]);
+  });
+});
+
+describe('CompletedController — score output validation gated on res.ok (regression)', () => {
+  function primeScoredSurvey() {
+    store.setSurveyData('survey-abc', { id: 'survey-abc', pool: '0xpool', isScored: true } as any);
+    store.setActiveSurvey('survey-abc');
+  }
+
+  function scoredServices() {
+    return {
+      account: {
+        getSignerAddress: vi.fn(() => '0xResp'),
+        signMessage: vi.fn(async () => 'sig'),
+      },
+    };
+  }
+
+  it('ok response with a valid { score } body: score is set', async () => {
+    primeScoredSurvey();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ score: 7 }) })));
+
+    const ctrl = new CompletedController(scoredServices() as any, 'survey-abc', 'doc-1');
+    await ctrl.render();
+
+    // The real { score } response shape passes validation and is assigned.
+    expect((ctrl as any).score).toBe(7);
+  });
+
+  it('ok response with a WRONG shape (missing score): fails loudly', async () => {
+    primeScoredSurvey();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ foo: 'bar' }) })));
+
+    const ctrl = new CompletedController(scoredServices() as any, 'survey-abc', 'doc-1');
+
+    // The output validator throws on the malformed body.
+    await expect(ctrl.render()).rejects.toThrow(/Score output validation failed/);
+  });
+
+  it('non-ok response: surfaces the real backend error (no misleading output-validation error), score not set', async () => {
+    primeScoredSurvey();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
+
+    const ctrl = new CompletedController(scoredServices() as any, 'survey-abc', 'doc-1');
+
+    // Must NOT reject — the non-ok branch logs + stops before the validator.
+    await expect(ctrl.render()).resolves.toBeUndefined();
+    expect((ctrl as any).score).toBeUndefined();
+    expect(logSpy).toHaveBeenCalledWith('ERROR', expect.anything());
+    logSpy.mockRestore();
   });
 });

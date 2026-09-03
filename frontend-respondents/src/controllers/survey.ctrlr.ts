@@ -4,7 +4,7 @@ import '@s3ntiment/shared/components';
 import '../components/survey-questions.js';
 import { IServices } from '../services.js';
 import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
-import { fetchAndDecryptSurveyWithRespondent, isScored, PoolConfig, Survey, validateDelegationInput } from '@s3ntiment/shared';
+import { fetchAndDecryptSurveyWithRespondent, isScored, PoolConfig, Survey, validateDelegationInput, validateDelegationOutput } from '@s3ntiment/shared';
 
 import { store } from '../state';
 import { createUserDataObject } from '@s3ntiment/shared'
@@ -156,13 +156,27 @@ export class SurveyController {
         return;
       }
 
-      const { delegation } = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/delegation`, {
+      const delegationResponse = await fetch(`${BACKENDURL}/api/surveys/${this.surveyId}/delegation`, {
           method: 'POST',
           headers: {
               'Content-Type': 'application/json'
           },
           body: JSON.stringify(args)
-      }).then(r => r.json());
+      });
+
+      if (!delegationResponse.ok) {
+          // Real backend error — surface it and stop. Do NOT run the output
+          // validator on the 4xx/5xx body, which would throw a misleading zod
+          // error over the error shape instead of the real one.
+          console.error('delegation fetch failed (backend):', await delegationResponse.text());
+          return;
+      }
+
+      const delegationBody = await delegationResponse.json();
+      // Output conformance: the delegation boundary returns { delegation }. Runs
+      // only on an ok response; a wrong shape fails loudly.
+      validateDelegationOutput(delegationBody);
+      const { delegation } = delegationBody;
 
       const result = await this.services.nillDB.storeOwned(docIUd, this.survey!, this.poolConfig!, event.detail.answers, this.surveyId, delegation)
 
