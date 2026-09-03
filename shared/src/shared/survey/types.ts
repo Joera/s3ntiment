@@ -82,6 +82,10 @@ export interface EncryptedConfig {
     queryIds?: string[]
     isScored: boolean,
     createdAt?: number
+    // Respondent-safe pool crypto identity persisted into the uploaded config so a
+    // respondent can source the pool's pkpId/pkpDid/safe/groupId via the decrypt
+    // helper (previously only the creating organiser held it in its local store).
+    poolConfig?: PoolConfig
 }
 
 export interface Survey {

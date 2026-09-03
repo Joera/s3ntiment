@@ -70,7 +70,11 @@ function primeStore() {
   store.setSurveyData(SURVEY_ID, {
     id: SURVEY_ID,
     pool: POOL_ID,
-    config: POOL_CONFIG,
+    // FIX (respondent-pkp-on-survey): the survey carries the pool config on
+    // `poolConfig` (sourced from the decrypted EncryptedConfig), not `config`.
+    // migrateEToS reads survey.poolConfig. Red under old code, which read
+    // survey.config (undefined here) and soft-failed with migration_no_pool_config.
+    poolConfig: POOL_CONFIG,
   } as any);
   store.setActiveSurvey(SURVEY_ID);
 }

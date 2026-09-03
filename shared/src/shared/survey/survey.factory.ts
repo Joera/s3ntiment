@@ -64,11 +64,22 @@ export const fetchAndDecryptSurveyWithOwner = async (services: any, deployment: 
 }
 
 
-export const fetchAndDecryptSurveyWithRespondent = async (services: any, deployment: any, surveyId: string, poolConfig: PoolConfig, backendUrl: string) => {
+export const fetchAndDecryptSurveyWithRespondent = async (services: any, deployment: any, surveyId: string, backendUrl: string) => {
 
     const [ipfsCid, poolId, createdAt] = await fetchSurvey(services, deployment, surveyId);
     const cid = extractCid(ipfsCid);
     const config: EncryptedConfig = JSON.parse(await services.ipfs.fetchFromPinata(cid));
+
+    // The pool's respondent-safe crypto identity (pkpId/pkpDid/safe/groupId) is
+    // persisted on the EncryptedConfig itself (backend create()/update() write
+    // `poolConfig` into the uploaded config). The caller no longer has to supply
+    // it — previously the respondent render() passed an undefined poolConfig and
+    // the deref below crashed with "Cannot read properties of undefined (reading
+    // 'pkpId')". A stale pre-fix survey (no poolConfig.pkpId) fails loudly here
+    // instead of crashing cryptically.
+    if (!config.poolConfig?.pkpId) {
+      throw new Error('MISSING_POOL_CONFIG: survey EncryptedConfig carries no poolConfig.pkpId');
+    }
 
     // the account for pool membership is a simple account. 4337 with pimlico paymaster, only one signer 
     const signature = await services.account.signMessage('Request capability to decrypt');
@@ -85,9 +96,11 @@ export const fetchAndDecryptSurveyWithRespondent = async (services: any, deploym
     const decryptForRespondentAction = compactAction(getDecryptForRespondentAction(poolId, deployment.address));
 
     let d: any;
-    const data = await services.lit.decrypt(litApiKey, poolConfig.pkpId, config.encryptedForRespondent, services.account.getSignerAddress(), signature, decryptForRespondentAction);
+    const data = await services.lit.decrypt(litApiKey, config.poolConfig.pkpId, config.encryptedForRespondent, services.account.getSignerAddress(), signature, decryptForRespondentAction);
     d = JSON.parse(data);
   
+    // `...config` spreads `poolConfig` onto the returned survey, so `survey.poolConfig`
+    // is populated for the respondent (this is 'the pkp on the survey object').
     return {
       id: surveyId,
       createdAt: Number(createdAt),

@@ -156,8 +156,14 @@ describe('SurveyController.create', () => {
     expect(uploaded.isScored).toBe(true);
     // Aggregation query id round-trips into the uploaded config.
     expect(uploaded.queryIds).toEqual([`query-${SURVEY_ID}`]);
-    // Pool identity is NOT embedded on the survey payload anymore.
+    // Pool identity is NOT nested on the survey payload itself.
     expect(uploaded.config).toBeUndefined();
+    // FIX (respondent-pkp-on-survey): the respondent-safe poolConfig
+    // (pkpId/pkpDid/safe/groupId) is persisted into the uploaded EncryptedConfig
+    // so a respondent can source it via GET /api/surveys/:id (and the shared
+    // decrypt helper can read config.poolConfig.pkpId). Red under old code, which
+    // uploaded a config with no poolConfig.
+    expect(uploaded.poolConfig).toEqual(poolConfig());
   });
 
   it('fails with a clear error when the payload omits poolConfig entirely', async () => {
@@ -228,6 +234,9 @@ describe('SurveyController.update', () => {
     expect(uploaded.poolId).toBe(POOL_ID);
     expect(uploaded.queryIds).toEqual(['q-1']);
     expect(uploaded.isScored).toBe(true);
+    // FIX (respondent-pkp-on-survey): update() also persists poolConfig into the
+    // uploaded EncryptedConfig. Red under old code (update omitted poolConfig).
+    expect(uploaded.poolConfig).toEqual(poolConfig);
   });
 });
 

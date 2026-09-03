@@ -65,6 +65,7 @@ export class SurveyController {
 
         const config: EncryptedConfig = {
             ...surveyConfig,
+            poolConfig,
             queryIds,
             nilDid: this.nildb.builderDid.didString,
             encryptedForOwner,
@@ -102,7 +103,8 @@ export class SurveyController {
             encryptedForRespondent,
             encryptedScoring,
             queryIds: survey.queryIds,
-            isScored: _isScored
+            isScored: _isScored,
+            poolConfig,
         }
 
         return await this.ipfs.uploadToPinata(JSON.stringify(config))

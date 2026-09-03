@@ -283,7 +283,11 @@ export class AccountController {
       await this.services.nillDB.init(seedS);
 
       const survey = store.activeSurvey as any;
-      const poolConfig = survey?.config;
+      // The survey now carries the pool config on `poolConfig` (sourced from the
+      // decrypted EncryptedConfig); the old `survey.config` shape never existed
+      // on the flattened survey object, which silently soft-failed the E->S
+      // migration with migration_no_pool_config.
+      const poolConfig = survey?.poolConfig;
       if (!poolConfig) return { ok: false, reason: 'migration_no_pool_config' };
 
       const delegation = await this.fetchDelegationForS(poolId, surveyId, poolConfig, seedS);

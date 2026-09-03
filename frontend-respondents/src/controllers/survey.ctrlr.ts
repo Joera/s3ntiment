@@ -20,11 +20,12 @@ export class SurveyController {
   surveyId: string;
   survey?: Survey;
   /**
-   * Pool config (pkpId/pkpDid/…) used to submit a response. It is NOT a plain
-   * store lookup — it is persisted inside the decrypted EncryptedConfig (the
-   * same `config` field the backend reads as `surveyConfig.config`), so it is
-   * plumbed out of the decrypted survey in render() rather than read off an
-   * unset `this.pool`.
+   * Pool config (pkpId/pkpDid/…) used to submit a response. Sourced from the
+   * decrypted EncryptedConfig's `poolConfig` field (persisted into the uploaded
+   * config by backend create()/update() and spread onto the returned survey by
+   * fetchAndDecryptSurveyWithRespondent). Assigned in render() from
+   * survey.poolConfig — never read off `survey.config`, which does not exist on
+   * the flattened survey object.
    */
   poolConfig?: PoolConfig;
 
@@ -82,17 +83,22 @@ export class SurveyController {
       this.renderLoading();
 
       try {
+        // The shared helper now derives poolConfig internally from the
+        // EncryptedConfig it parses (config.poolConfig.pkpId), so we no longer
+        // forward this.poolConfig — which used to be undefined here and crashed
+        // the decrypt with "Cannot read properties of undefined (reading 'pkpId')".
         const survey = await fetchAndDecryptSurveyWithRespondent(
-          this.services, surveyStore, this.surveyId, this.poolConfig, BACKENDURL
+          this.services, surveyStore, this.surveyId, BACKENDURL
         );
 
         this.survey = survey;
 
-        // R1 fix: the pool config lives on the decrypted EncryptedConfig, not on
-        // a separately-set `this.pool`. Plumb it out so setSurveyListener() can
-        // dereference poolConfig.pkpId/pkpDid instead of always throwing on an
-        // unset pool.
-        this.poolConfig = (survey as any).config as PoolConfig | undefined;
+        // FIX (respondent-pkp-on-survey): plumb the real PoolConfig off the
+        // decrypted survey (the helper spreads config.poolConfig onto it). This
+        // is 'the pkp on the survey object' — setSurveyListener() and the
+        // migration both dereference poolConfig.pkpId/pkpDid/safe. The old
+        // `(survey as any).config` assignment always yielded undefined.
+        this.poolConfig = survey.poolConfig;
 
         survey.isScored = isScored(survey.groups);
         store.setSurveyData(this.surveyId, survey);

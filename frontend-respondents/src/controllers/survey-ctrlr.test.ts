@@ -50,14 +50,16 @@ const SURVEY_ID = 'survey-abc';
 const POOL_ID = '0xpool123';
 const PKP_ID = '0xpkp123';
 const PKP_DID = 'did:pkp:123';
+const SAFE = '0xSafe';
 // BACKENDURL is undefined in the node test env (import.meta.env.VITE_* unset);
 // it is only forwarded to the mocked shared fn and threaded into the stubbed
 // fetch URL, so this is harmless.
 const RESPONDENT_ADDR = '0x00000000000000000000000000000000000000aa';
 
-// A decrypted survey shaped like the real EncryptedConfig return: it carries
-// the pool config (pkpId/pkpDid/…) on `config`, exactly as the backend reads it
-// (nillcc-backend/src/survey.ctrlr.ts: `const { pkpId, pkpDid } = surveyConfig.config`).
+// A decrypted survey shaped like the real fetchAndDecryptSurveyWithRespondent
+// return: it carries the pool config on `poolConfig` (the shared helper spreads
+// the EncryptedConfig — which now persists poolConfig — into the returned
+// survey), NOT on a `config` key.
 const DECRYPTED_SURVEY = {
   id: SURVEY_ID,
   pool: POOL_ID,
@@ -78,7 +80,7 @@ const DECRYPTED_SURVEY = {
       ],
     },
   ],
-  config: { pkpId: PKP_ID, pkpDid: PKP_DID, chainId: 8453, litNetwork: 'datil-dev' },
+  poolConfig: { safe: SAFE, pkpId: PKP_ID, pkpDid: PKP_DID, chainId: 8453, litNetwork: 'datil-dev' },
 };
 
 function fakeServices() {
@@ -146,27 +148,23 @@ describe('SurveyController.render()', () => {
     expect((globalThis as any).__surveyGetListener('survey-complete')).toBeUndefined();
   });
 
-  it('loads and renders the survey on the success path (R1 fix makes it reachable)', async () => {
+  it('loads and renders the survey on the success path (pool config sourced from survey.poolConfig)', async () => {
     primeStore();
-    // config known before decrypt (e.g. from a prior fetch) is forwarded to the
-    // shared decrypt fn; after decrypt the controller re-plumbs it from the
-    // decrypted EncryptedConfig's `config` field.
-    const knownPoolConfig = { pkpId: '0xpre', pkpDid: 'did:pkp:pre' };
-
+    // NOTE: no pre-seeding of this.poolConfig — the shared decrypt helper now
+    // derives poolConfig internally from the EncryptedConfig it parses, so
+    // render() no longer forwards a poolConfig argument.
     const ctrl = new SurveyController(fakeServices(), SURVEY_ID);
-    (ctrl as any).poolConfig = knownPoolConfig;
     const persistSpy = vi.spyOn(store, 'persistSurveys');
 
     await ctrl.render();
 
-    // shared decrypt fn called with (services, surveyStore, surveyId, poolConfig, backendUrl)
-    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      SURVEY_ID,
-      knownPoolConfig,
-      undefined,
-    );
+    // fetchAndDecryptSurveyWithRespondent is invoked WITHOUT a poolConfig arg:
+    // (services, surveyStore, surveyId, backendUrl) — 4 args, not 5. Red under
+    // old code, which threaded `this.poolConfig` (undefined) as the 4th arg.
+    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledTimes(1);
+    const args = (fetchAndDecryptSurveyWithRespondent as any).mock.calls[0];
+    expect(args.length).toBe(4);
+    expect(args[2]).toBe(SURVEY_ID);
 
     // decrypted content + scoring persisted to the store
     expect(isScored).toHaveBeenCalledWith(DECRYPTED_SURVEY.groups);
@@ -178,8 +176,11 @@ describe('SurveyController.render()', () => {
     });
     expect(persistSpy).toHaveBeenCalled();
 
-    // R1 fix: pool config plumbed out of the decrypted config
+    // FIX: this.poolConfig is set to the REAL PoolConfig carried on
+    // survey.poolConfig (not `(survey as any).config`, which was always
+    // undefined). Red under old code, which assigned undefined.
     expect((ctrl as any).poolConfig).toMatchObject({
+      safe: SAFE,
       pkpId: PKP_ID,
       pkpDid: PKP_DID,
     });
@@ -401,54 +402,47 @@ describe('SurveyController.destroy() / process()', () => {
   });
 });
 
-describe('SurveyController cold-start regression (R1 pool-config gap), pinned', () => {
-  // This suite DOCUMENTS the known, intentionally-deferred chicken-and-egg
-  // described in SPEC-frontend-respondents.md Gaps: on a FRESH controller's
-  // first render() `this.poolConfig` is still undefined when forwarded into
-  // fetchAndDecryptSurveyWithRespondent. The real shared fn derefs
-  // `poolConfig.pkpId`, so the first render throws and lands in renderWarning.
-  // We pin that CURRENT behaviour here so it cannot silently change while the
-  // human resolution (source poolConfig before first decrypt) is still pending.
-  // We deliberately do NOT pre-seed (ctrl as any).poolConfig and do NOT fix the
-  // gap — the shared-fn mock below replicates the real deref-on-undefined so the
-  // test exercises the same failure path production would.
-  it('fresh controller + un-seeded poolConfig -> renderWarning, no navigate, no renderTemplate', async () => {
+describe('SurveyController cold-start (shared fn derives poolConfig internally), pinned', () => {
+  // This suite documents the FIXED chicken-and-egg: previously a FRESH
+  // controller's first render() passed `this.poolConfig` (undefined) into
+  // fetchAndDecryptSurveyWithRespondent, which deref'd poolConfig.pkpId and
+  // crashed. Now the shared helper derives poolConfig from the EncryptedConfig
+  // it parses (config.poolConfig.pkpId), so a fresh controller loads without
+  // any pre-seeded poolConfig and this.poolConfig is plumbed from the returned
+  // survey.poolConfig. Red under old code (fresh controller -> renderWarning).
+  it('fresh controller loads without a pre-seeded poolConfig (render passes no poolConfig arg)', async () => {
     primeStore();
-    // Replicate the real shared decrypt fn: it dereferences poolConfig.pkpId,
-    // so an undefined poolConfig throws exactly like production on a fresh
-    // controller's first render.
-    h.decryptImpl.current = (...args: any[]) => {
-      const poolConfig = args[3];
-      if (!poolConfig) {
-        throw new Error("Cannot read properties of undefined (reading 'pkpId')");
-      }
-      return DECRYPTED_SURVEY;
-    };
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const ctrl = new SurveyController(fakeServices(), SURVEY_ID);
-    // NOTE: intentionally no `(ctrl as any).poolConfig = ...` here — that is
-    // exactly the deferred R1 gap we are pinning.
+    // NOTE: intentionally no `(ctrl as any).poolConfig = ...` — the fresh
+    // controller must now work on its own.
     await ctrl.render();
 
     const app: any = (globalThis as any).document.querySelector('#app');
 
-    // landed in renderWarning, not renderTemplate.
-    expect(app.innerHTML).toContain('Decryption failed');
-    expect(app.innerHTML).not.toContain('survey-questions');
+    // rendered (renderTemplate), NOT renderWarning
+    expect(app.innerHTML).toContain('survey-questions');
+    expect(app.innerHTML).not.toContain('Decryption failed');
 
-    // fetch attempted with undefined poolConfig (the gap) then rejected
-    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      SURVEY_ID,
-      undefined,
-      undefined,
-    );
+    // fetch invoked WITHOUT a poolConfig argument: (services, surveyStore,
+    // surveyId, backendUrl) — 4 args, not the old 5 (which threaded an
+    // undefined this.poolConfig). Red under old code.
+    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledTimes(1);
+    const args = (fetchAndDecryptSurveyWithRespondent as any).mock.calls[0];
+    expect(args.length).toBe(4);
+    expect(args[2]).toBe(SURVEY_ID);
 
-    // no navigation and no submission listener were reached
+    // this.poolConfig set to the real PoolConfig from survey.poolConfig
+    expect((ctrl as any).poolConfig).toMatchObject({
+      safe: SAFE,
+      pkpId: PKP_ID,
+      pkpDid: PKP_DID,
+    });
+
+    // submission listener registered (no crash on the success path)
+    expect((globalThis as any).__surveyGetListener('survey-complete')).toBeDefined();
     expect(router.navigate).not.toHaveBeenCalled();
-    expect((globalThis as any).__surveyGetListener('survey-complete')).toBeUndefined();
-    expect(consoleError).toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });
