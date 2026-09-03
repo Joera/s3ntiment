@@ -39,4 +39,30 @@ describe('fetchLitApiKey producer-side validation', () => {
       poolId: '0xpool',
     });
   });
+
+  it('output conformance: an ok response with a WRONG shape (missing apiKey) fails loudly', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ foo: 'bar' }) }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // validateUsageKeyOutput (real) throws a field-named error on the body.
+    await expect(
+      fetchLitApiKey('http://backend', '0xAddr', '0xsig', '0xpool'),
+    ).rejects.toThrow(/Usage key output validation failed/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('output conformance: a non-ok response surfaces the real backend error (NOT a misleading output-validation error)', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, json: async () => ({ msg: 'unauthorized' }) }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      fetchLitApiKey('http://backend', '0xAddr', '0xsig', '0xpool'),
+    ).rejects.toThrow(/unauthorized/);
+
+    // The real backend message surfaces; the output validator never runs.
+    await expect(
+      fetchLitApiKey('http://backend', '0xAddr', '0xsig', '0xpool'),
+    ).rejects.not.toThrow(/Usage key output validation failed/);
+  });
 });

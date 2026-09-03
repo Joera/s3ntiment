@@ -27,6 +27,15 @@ vi.mock('@s3ntiment/shared', () => ({
   // delegation submit path; stubbed to pass here (validator unit-tested in
   // @s3ntiment/shared).
   validateDelegationInput: vi.fn((input: any) => input),
+  // controller also consumes the shared zod nillcc RESPONSE-validator on the
+  // delegation path; stubbed with real teeth (throws on a body missing
+  // `delegation`) so a wrong response shape fails the regression test.
+  validateDelegationOutput: vi.fn((body: any) => {
+    if (!body || typeof body.delegation === 'undefined') {
+      throw new Error('Delegation output validation failed: delegation: delegation is required');
+    }
+    return body;
+  }),
 }));
 vi.mock('@s3ntiment/shared/components', () => ({}));
 vi.mock('../components/survey-questions.js', () => ({}));
@@ -103,6 +112,8 @@ function installBrowserGlobals() {
   // crypto/fetch are getter-only or read-only globals in modern Node — stub them.
   vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'doc-123') });
   vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    text: async () => '',
     json: async () => ({ delegation: 'del-1' }),
   })));
 }
@@ -303,6 +314,69 @@ describe('SurveyController.setSurveyListener() submission', () => {
     expect((globalThis as any).fetch).not.toHaveBeenCalled();
     expect(services.nillDB.storeOwned).not.toHaveBeenCalled();
     expect(router.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('SurveyController delegation — output validation gated on res.ok (regression)', () => {
+  function buildController() {
+    const services = fakeServices();
+    const ctrl = new SurveyController(services, SURVEY_ID);
+    (ctrl as any).survey = { id: SURVEY_ID, pool: POOL_ID, title: 'T' };
+    (ctrl as any).poolConfig = { safe: '0xSafe', pkpId: PKP_ID, pkpDid: PKP_DID };
+    return { services, ctrl };
+  }
+
+  it('ok response with a valid { delegation } body: validated, stored, navigated', async () => {
+    const { services, ctrl } = buildController();
+
+    await ctrl.setSurveyListener();
+    const cb = (globalThis as any).__surveyGetListener('survey-complete');
+    await cb({ detail: { answers: [] } });
+
+    // The real { delegation } response shape passes validation and the
+    // delegation value flows into storeOwned, then navigate.
+    expect(services.nillDB.storeOwned).toHaveBeenCalledTimes(1);
+    expect(router.navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('ok response with a WRONG shape (missing delegation): fails loudly, no storeOwned/navigate', async () => {
+    const { services, ctrl } = buildController();
+    // Wrong output shape — the backend body lacks the `delegation` key.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      text: async () => '',
+      json: async () => ({ foo: 'bar' }),
+    })));
+
+    await ctrl.setSurveyListener();
+    const cb = (globalThis as any).__surveyGetListener('survey-complete');
+
+    // The output validator throws on the malformed body; the submission must
+    // NOT proceed to storeOwned / navigate.
+    await expect(cb({ detail: { answers: [] } })).rejects.toThrow(/Delegation output validation failed/);
+    expect(services.nillDB.storeOwned).not.toHaveBeenCalled();
+    expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('non-ok response: surfaces the real backend error and stops, WITHOUT a misleading output-validation error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { services, ctrl } = buildController();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      text: async () => JSON.stringify({ error: 'delegation rejected' }),
+      json: async () => ({}),
+    })));
+
+    await ctrl.setSurveyListener();
+    const cb = (globalThis as any).__surveyGetListener('survey-complete');
+
+    // Must NOT reject: the real backend error is surfaced (logged) and the
+    // handler stops before the output validator ever runs.
+    await expect(cb({ detail: { answers: [] } })).resolves.toBeUndefined();
+    expect(services.nillDB.storeOwned).not.toHaveBeenCalled();
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
 

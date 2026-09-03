@@ -11,6 +11,7 @@ import { S3NTIMENT_STORE as surveyStore } from 's3ntiment-contracts/constants';
 import {  fetchAndDecryptSurveyWithOwner, fetchLitApiKey, Pool, Survey } from "@s3ntiment/shared";
 import {
   validateResultsInput,
+  validateResultsOutput,
   validateSurveyUpdateInput,
   validateSurveyUpdateOutput,
 } from '@s3ntiment/shared/nillcc';
@@ -250,16 +251,25 @@ export class SurveyController {
             body: JSON.stringify(resultsPayload)
         });
 
-        console.log(response);
+        if (!response.ok) {
+            // Real backend error — surface it and stop. Do NOT run the output
+            // validator on the 4xx/5xx body, which would throw a misleading zod
+            // error over the error shape instead of the real one.
+            console.error('results fetch failed (backend):', await response.text());
+            return;
+        }
 
-        // const talliedResults = await response.json();
+        const talliedResults = await response.json();
+        // Output conformance: the results boundary returns { results }. Runs only
+        // on an ok response; a wrong shape fails loudly with a field-named message.
+        validateResultsOutput(talliedResults);
 
-        // this.survey.results = talliedResults.results;
+        this.survey.results = talliedResults.results;
 
-        // if (this.cancelled) return;  
+        if (this.cancelled) return;
 
-        // console.log("RESULTS", this.survey.results)
-        // store.addSurvey(this.survey);
+        console.log("RESULTS", this.survey.results)
+        store.addSurvey(this.survey);
     }
 
     setListeners() {

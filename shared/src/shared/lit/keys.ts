@@ -1,4 +1,4 @@
-import { validateUsageKeyInput } from '../nillcc/index.js';
+import { validateUsageKeyInput, validateUsageKeyOutput } from '../nillcc/index.js';
 
 export async function fetchLitApiKey(
   backendUrl: string,
@@ -25,6 +25,10 @@ export async function fetchLitApiKey(
     throw new Error(msg ?? 'fetchLitApiKey: unauthorized');
   }
 
-  const { apiKey } = await response.json();
+  const body = await response.json();
+  // Output conformance: the usage-key boundary returns { apiKey }. Runs only on
+  // an ok response; a wrong shape fails loudly with a field-named message.
+  validateUsageKeyOutput(body);
+  const { apiKey } = body;
   return apiKey;
 }
