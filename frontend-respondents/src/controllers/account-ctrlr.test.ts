@@ -70,7 +70,9 @@ function primeStore() {
   store.setSurveyData(SURVEY_ID, {
     id: SURVEY_ID,
     pool: POOL_ID,
-    config: POOL_CONFIG,
+    // The decrypted survey carries the pool config on `poolConfig` (sourced
+    // from the EncryptedConfig), not on a `.config` key.
+    poolConfig: POOL_CONFIG,
   } as any);
   store.setActiveSurvey(SURVEY_ID);
 }
@@ -160,6 +162,27 @@ describe('AccountController.secureWithEmailWallet — first-time secure (canonic
     // flat fields must no longer be sent at the top level.
     expect(body.pkpId).toBeUndefined();
     expect(body.pkpDid).toBeUndefined();
+  });
+});
+
+describe('AccountController.secureWithEmailWallet — migration sources poolConfig from survey.poolConfig (regression)', () => {
+  it('uses survey.poolConfig (NOT survey.config) so the E->S migration does not soft-fail with migration_no_pool_config', async () => {
+    const services = fakeServices();
+    services.nillDB.listOwnedBySurvey.mockResolvedValue([
+      { documentId: 'doc-e1', data: { _id: 'u1', surveyId: SURVEY_ID } },
+    ]);
+
+    // primeStore() stores the pool config on `poolConfig` (the decrypted survey
+    // shape). A stale `survey.config` read (the pre-fix code) would be undefined
+    // and return migration_no_pool_config without running the migration.
+    const ctrl = new AccountController(services as any);
+    const result = await ctrl.secureWithEmailWallet(EMAIL, POOL_ID);
+
+    // migration ran to completion — NOT soft-failed on missing pool config
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+    expect(services.nillDB.createData).toHaveBeenCalledTimes(1);
+    expect(services.account.write).toHaveBeenCalledTimes(1);
   });
 });
 

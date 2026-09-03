@@ -64,11 +64,23 @@ export const fetchAndDecryptSurveyWithOwner = async (services: any, deployment: 
 }
 
 
-export const fetchAndDecryptSurveyWithRespondent = async (services: any, deployment: any, surveyId: string, poolConfig: PoolConfig, backendUrl: string) => {
+export const fetchAndDecryptSurveyWithRespondent = async (services: any, deployment: any, surveyId: string, backendUrl: string) => {
 
     const [ipfsCid, poolId, createdAt] = await fetchSurvey(services, deployment, surveyId);
     const cid = extractCid(ipfsCid);
     const config: EncryptedConfig = JSON.parse(await services.ipfs.fetchFromPinata(cid));
+
+    // A respondent has no other authoritative source of the pool's pkpId (the
+    // creating organiser's one-shot POST /api/pools response is never visible to
+    // them), so it must travel on the EncryptedConfig itself. The backend
+    // persists `poolConfig` into this config at create()/update() time; derive
+    // it here instead of requiring an (undefined) caller-supplied poolConfig.
+    // Guard loudly for stale pre-fix surveys that carry no poolConfig, so the
+    // cryptic `Cannot read properties of undefined (reading 'pkpId')` becomes a
+    // clear error.
+    if (!config.poolConfig?.pkpId) {
+      throw new Error('MISSING_POOL_CONFIG: survey EncryptedConfig carries no poolConfig.pkpId');
+    }
 
     // the account for pool membership is a simple account. 4337 with pimlico paymaster, only one signer 
     const signature = await services.account.signMessage('Request capability to decrypt');
@@ -85,7 +97,7 @@ export const fetchAndDecryptSurveyWithRespondent = async (services: any, deploym
     const decryptForRespondentAction = compactAction(getDecryptForRespondentAction(poolId, deployment.address));
 
     let d: any;
-    const data = await services.lit.decrypt(litApiKey, poolConfig.pkpId, config.encryptedForRespondent, services.account.getSignerAddress(), signature, decryptForRespondentAction);
+    const data = await services.lit.decrypt(litApiKey, config.poolConfig.pkpId, config.encryptedForRespondent, services.account.getSignerAddress(), signature, decryptForRespondentAction);
     d = JSON.parse(data);
   
     return {
