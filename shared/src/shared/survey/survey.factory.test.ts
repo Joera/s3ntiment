@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   fetchLitApiKey: vi.fn(async () => 'lit-key-1'),
-  decrypt: vi.fn(async () => JSON.stringify({ title: 'How do you like coffee?' })),
+  decrypt: vi.fn(async (..._args: any[]) => JSON.stringify({ title: 'How do you like coffee?' })),
   signMessage: vi.fn(async () => 'sig-1'),
 }));
 
@@ -25,7 +25,7 @@ vi.mock('../helpers/retries.js', () => ({
   withRetry: vi.fn(async (fn: any) => fn(undefined as any)),
 }));
 
-import { fetchAndDecryptSurveyWithRespondent } from './survey.factory.js';
+import { fetchAndDecryptSurveyWithOwner, fetchAndDecryptSurveyWithRespondent } from './survey.factory.js';
 
 const DEPLOYMENT = { address: '0xstore', abi: [] };
 
@@ -58,6 +58,99 @@ function services(overrides: any = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.decrypt.mockResolvedValue(JSON.stringify({ title: 'How do you like coffee?' }));
+});
+
+// create()-path EncryptedConfig: `...surveyConfig` spreads the Survey object
+// which carries `pool` and NO `poolId` key (only update() writes poolId). This
+// is the shape that triggered the delegation 403 incident, and the same latent
+// bug existed on the owner-decrypt path until the pool id was sourced from the
+// on-chain fetchSurvey record instead.
+const CREATE_PATH_CONFIG = {
+  id: 'survey-1',
+  pool: '0xpool',
+  nilDid: 'did:key:builder',
+  encryptedForOwner: { ciphertext: 'ct', dataToEncryptHash: 'h' },
+  encryptedForRespondent: { ciphertext: 'ct', dataToEncryptHash: 'h' },
+  encryptedScoring: 'scoring',
+  isScored: false,
+  queryIds: ['q-1'],
+};
+
+function ownerServices(overrides: any = {}) {
+  const svc = {
+    viem: { read: vi.fn(async () => ['cid-1', '0xpool', 100]) },
+    ipfs: {
+      fetchFromPinata: vi.fn(async () => JSON.stringify(CREATE_PATH_CONFIG)),
+    },
+    safe: {
+      getSignerAddress: vi.fn(() => '0xowner'),
+      getAddress: vi.fn(() => '0xSafe'),
+      signMessage: h.signMessage,
+    },
+    lit: { decrypt: h.decrypt },
+    ...overrides,
+  };
+  return svc;
+}
+
+describe('fetchAndDecryptSurveyWithOwner (chain-sourced poolId)', () => {
+  it('sources the poolId from the chain fetchSurvey, not the config, and bakes it into the owner-decrypt action', async () => {
+    const svc = ownerServices();
+
+    const survey = await fetchAndDecryptSurveyWithOwner(
+      svc as any,
+      DEPLOYMENT as any,
+      'survey-1',
+      { pkpId: 'pkp-1' } as any,
+      'http://backend',
+    );
+
+    // Usage-key fetch used the on-chain poolId (config carries no poolId on the
+    // create path).
+    expect(h.fetchLitApiKey).toHaveBeenCalledWith(
+      'http://backend',
+      '0xowner',
+      'sig-1',
+      '0xpool',
+      undefined,
+    );
+
+    // Owner-decrypt action baked the REAL poolId into isPoolSafe — not
+    // 'undefined' (the byte-exact action whose CID no key permits).
+    const decryptCall = h.decrypt.mock.calls[0];
+    expect(decryptCall[0]).toBe('lit-key-1');
+    expect(decryptCall[1]).toBe('pkp-1');
+    expect(String(decryptCall[5])).toContain("isPoolSafe('0xSafe', '0xpool')");
+    expect(String(decryptCall[5])).not.toContain('undefined');
+
+    expect(survey).toMatchObject({ id: 'survey-1', pool: '0xpool' });
+  });
+
+  it('still decrypts for update-path configs that DO carry poolId (regression guard)', async () => {
+    const svc = ownerServices();
+    svc.ipfs.fetchFromPinata.mockResolvedValue(
+      JSON.stringify({ ...CREATE_PATH_CONFIG, poolId: '0xpool' }),
+    );
+
+    const survey = await fetchAndDecryptSurveyWithOwner(
+      svc as any,
+      DEPLOYMENT as any,
+      'survey-1',
+      { pkpId: 'pkp-1' } as any,
+      'http://backend',
+    );
+
+    expect(survey).toMatchObject({ id: 'survey-1' });
+    expect(h.fetchLitApiKey).toHaveBeenCalledWith(
+      'http://backend',
+      '0xowner',
+      'sig-1',
+      '0xpool',
+      undefined,
+    );
+    const decryptCall = h.decrypt.mock.calls[0];
+    expect(String(decryptCall[5])).toContain("isPoolSafe('0xSafe', '0xpool')");
+  });
 });
 
 describe('fetchAndDecryptSurveyWithRespondent (new signature)', () => {

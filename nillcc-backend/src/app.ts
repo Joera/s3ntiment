@@ -194,9 +194,19 @@ export function createApp(services: AppServices) {
 
     console.log({ userDid, signature, poolId, poolConfig })
 
-    const { delegation } = await survey.getUserDelegation(signature, userAddress, poolId, poolConfig, surveyId, userDid)
-
-    res.json({ delegation });
+    // Bug A (audit survey-delegation-502): this handler previously had NO
+    // try/catch (unlike /results above), so any upstream throw (e.g. a Lit 403)
+    // rejected the async handler unhandled and killed the whole process -> nginx
+    // 502. Mirror /results: surface a 500 JSON with detail and let the process
+    // live on. The global error middleware + process.on guards (below / main.ts)
+    // are the backstop for anything that still escapes.
+    try {
+      const { delegation } = await survey.getUserDelegation(signature, userAddress, poolId, poolConfig, surveyId, userDid)
+      res.json({ delegation });
+    } catch (error: any) {
+      console.error(error);
+      res.status(500).json({ error: 'DELEGATION_FAILED', detail: error.message });
+    }
   });
 
   router.post('/builder/register', async (req: Request, res: Response) => {
@@ -242,6 +252,21 @@ export function createApp(services: AppServices) {
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'NOT_FOUND' });
+  });
+
+  // ====== GLOBAL ERROR MIDDLEWARE ======
+  // Last-resort safety net (recommended hardening from audit survey-delegation-502):
+  // any error that reaches Express via next(err) — a synchronous handler throw, a
+  // JSON-body parse failure, or a future route that forgets its try/catch —
+  // degrades to a 500 JSON instead of the default HTML error page and, crucially,
+  // never lets an upstream failure crash the process. Async route rejections are
+  // caught at the route level (see the delegation handler above); the
+  // process.on('unhandledRejection'|'uncaughtException') guards in main.ts are the
+  // final backstop for anything that still escapes as an unhandled rejection.
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('Unhandled route error:', err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: 'INTERNAL_ERROR', detail: err?.message ?? String(err) });
   });
 
   return app;

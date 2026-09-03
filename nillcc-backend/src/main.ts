@@ -39,6 +39,21 @@ await nildb.initBuilder();
 
 const app = createApp({ pool, survey, viem, lit, litPoolKeys });
 
+// ====== PROCESS GUARDS ======
+// Node >=15 terminates on unhandled promise rejections / uncaught exceptions by
+// default — which is exactly how an upstream Lit/NilDB/IPFS/RPC failure (e.g. a
+// Lit 403 on a delegation action) used to crash the whole backend into an nginx
+// 502 (audit survey-delegation-502). Register guards so any error that still
+// escapes a route's try/catch is logged and the process stays alive, degrading
+// to the route's 500 JSON instead of killing the service. We intentionally do
+// NOT exit: a single bad upstream response must never take the backend down.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection] kept alive:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException] kept alive:', err);
+});
+
 // ====== SERVER STARTUP ======
 
 const PORT = process.env.PORT || 8080;

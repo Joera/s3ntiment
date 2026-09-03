@@ -32,7 +32,17 @@ export const fetchSurveyAndParseCid = async (services: any, deployment: any, sur
 
 export const fetchAndDecryptSurveyWithOwner = async (services: any, deployment: any, surveyId: string, poolConfig: PoolConfig, backendUrl: string) => {
 
-   const survey = await fetchSurveyAndParseCid(services, deployment, surveyId)
+   // Source the pool id from the on-chain fetchSurvey record (the second tuple
+   // element), NOT from the parsed EncryptedConfig. The backend create() path
+   // spreads the Survey object (`pool`, no `poolId`) into the uploaded config
+   // — only update() writes poolId — so config.poolId is undefined for
+   // create-path surveys and would otherwise bake `'undefined'` into the
+   // owner-decrypt action code (same latent 403 class as the delegation bug,
+   // audit survey-delegation-502). The chain value is authoritative for both
+   // the usage-key fetch and the action code, mirroring the respondent path.
+   const [ipfsCid, poolId, createdAt] = await fetchSurvey(services, deployment, surveyId);
+   const cid = extractCid(ipfsCid)
+   const survey = JSON.parse(await services.ipfs.fetchFromPinata(cid)) as EncryptedConfig;
 
     let d: any;
     // Survey ownership is managed through a safe. Organiser is a signer to this safe 
@@ -40,7 +50,7 @@ export const fetchAndDecryptSurveyWithOwner = async (services: any, deployment: 
     const safeAddress = services.safe.getAddress();
     const signature = await services.safe.signMessage('Request capability to decrypt');
     const litApiKey = await withRetry(
-      (signal) => fetchLitApiKey(backendUrl, userAddress, signature, survey.poolId, signal),
+      (signal) => fetchLitApiKey(backendUrl, userAddress, signature, poolId, signal),
       {
         timeoutMs: 5_000,
         onRetry: (attempt, error) =>
@@ -48,7 +58,7 @@ export const fetchAndDecryptSurveyWithOwner = async (services: any, deployment: 
       }
     );
 
-    const decryptForOwnerAction = compactAction(getDecryptForOwnerAction(survey.poolId, deployment.address, safeAddress));
+    const decryptForOwnerAction = compactAction(getDecryptForOwnerAction(poolId, deployment.address, safeAddress));
     // let _cid = await services.lit.getActionCid(decryptForOwnerAction)
     // console.log(decryptForOwnerAction)
 
