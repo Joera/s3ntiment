@@ -81,11 +81,17 @@ describe('validateRegisterBuilderOutput', () => {
 });
 
 describe('validateDelegationOutput', () => {
-  it('parses { delegation }', () => {
-    expect(validateDelegationOutput({ delegation: { id: 'del' } }).delegation).toBeDefined();
+  it('parses { delegation } as a non-empty NUC token string', () => {
+    expect(validateDelegationOutput({ delegation: 'del-token-1' }).delegation).toBe('del-token-1');
   });
   it('rejects a missing delegation key', () => {
     assertFieldNamed(() => validateDelegationOutput({}), 'delegation');
+  });
+  it('rejects a non-string delegation (e.g. an object)', () => {
+    assertFieldNamed(() => validateDelegationOutput({ delegation: { id: 'del' } }), 'delegation');
+  });
+  it('rejects an empty-string delegation', () => {
+    assertFieldNamed(() => validateDelegationOutput({ delegation: '' }), 'delegation');
   });
 });
 

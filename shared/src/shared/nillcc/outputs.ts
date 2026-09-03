@@ -79,11 +79,12 @@ export const RegisterBuilderOutputSchema = z.object({
 export type RegisterBuilderOutput = z.infer<typeof RegisterBuilderOutputSchema>;
 
 // ============================================================================
-// POST /api/surveys/:surveyId/delegation — { delegation } (presence-check)
+// POST /api/surveys/:surveyId/delegation — { delegation } (NUC token, a
+// non-empty string built end-to-end as headerB64 + '.' + payloadB64 + '.' + sigB64)
 // ============================================================================
 
 export const DelegationOutputSchema = z.object({
-  delegation: z.object({}).passthrough(),
+  delegation: z.string().min(1, 'delegation is required'),
 });
 
 export type DelegationOutput = z.infer<typeof DelegationOutputSchema>;

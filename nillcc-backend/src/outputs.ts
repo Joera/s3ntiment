@@ -51,9 +51,9 @@ export const REGISTER_BUILDER_OUTPUT_SCHEMA: ValidationSchema = {
   ok: { required: true, type: 'boolean' },
 };
 
-// { delegation } — opaque object (no nested required fields).
+// { delegation } — NUC token, a non-empty string (headerB64 + '.' + payloadB64 + '.' + sigB64).
 export const DELEGATION_OUTPUT_SCHEMA: ValidationSchema = {
-  delegation: { required: true, type: 'object' },
+  delegation: { required: true, type: 'string' },
 };
 
 export const USAGE_KEY_OUTPUT_SCHEMA: ValidationSchema = {
