@@ -58,6 +58,55 @@ export class NewSurveyController {
     this.reactiveViews = [];
   }
 
+  /*
+   * handleSurveySubmit — full create-a-survey flow, top to bottom.
+   * Runs on the 'survey-submit' custom event fired by <draft-survey-editor>.
+   *
+   * 1. Extract `survey` from event.detail.survey (the draft the editor emits).
+   * 2. Generate IDs: `surveyId = crypto.randomUUID()`, and `poolId` = the
+   *    survey's existing pool, or a fresh crypto.randomUUID() if none is set.
+   * 3. Branch on `isNewPool` (true when survey.pool is absent):
+   *    - NEW pool: `safeAddress = safe.connectToFreshSafe(poolId)` (mints a
+   *      fresh Safe for the new pool).
+   *    - EXISTING pool: look up the pool in the store, reuse its saved
+   *      `safeAddress`, and call `safe.connectToExistingSafe(safeAddress)`.
+   * 4. Get the signer: `userAddress = safe.getSignerAddress()`.
+   * 5. Sign the message "Request owner invocation" → `signature`.
+   * 6. If isNewPool — the NEW-POOL sub-sequence:
+   *    a. UI step → 'creating-pool'.
+   *    b. Build pool-create payload + zod-validate INPUT (fast-fail before
+   *       the round-trip).
+   *    c. POST `${BACKENDURL}/api/pools`. On !ok → UI step 'error' + return.
+   *    d. Parse pool JSON + zod-validate OUTPUT (must keep the contract the
+   *       FE derefs below).
+   *    e. Destructure { pkpId, pkpDid, groupId } from the response.
+   *    f. UI step → 'creating-invites'. For each batch call createBatch(...)
+   *       and collect the resulting batch ids as `batchIds`.
+   *    g. UI step → 'register-pool'. Register the pool on chain:
+   *       safe.write(createSurvey, [surveyId, poolId, "0", batchIds]).
+   *    h. Build register-builder payload + zod-validate INPUT.
+   *    i. POST `${BACKENDURL}/api/builder/register`. On !ok → log + return.
+   *    j. zod-validate OUTPUT, then build `config`
+   *       (safe, chainId, litNetwork, pkpId, pkpDid, groupId).
+   *    k. store.addPool({ id: poolId, name, safeAddress, batches, createdAt, config }).
+   * 7. SHARED survey-create sub-sequence (new pool AND existing pool):
+   *    a. UI step → 'creating-survey'.
+   *    b. Build `surveyConfig` (id, title, pool, introduction, groups, batches).
+   *    c. Grab `poolConfig = store.getPool(poolId)?.config` (stored above for
+   *       a fresh pool; already present for an existing pool).
+   *    d. Build survey-create payload + zod-validate INPUT (poolConfig must
+   *       carry pkpId / pkpDid / safe or the boundary rejects it).
+   *    e. POST `${BACKENDURL}/api/surveys`. On !ok → UI step 'error' + return.
+   *    f. Parse survey JSON + zod-validate OUTPUT (expects { cid }).
+   *    g. Destructure `cid` from the response.
+   * 8. If `ipfs.isCID(cid)` is true:
+   *    a. Write `updateSurvey` on chain with [surveyId, cid.toString()].
+   *    b. On tx success (receipt.status == "success"): add every batch to the
+   *       store, set surveyConfig.batches, add the survey to the store, then
+   *       navigate to `/batch/<pool>/<batchId>`.
+   *    c. On tx failure: alert('create survey tx failed ' + txHash) + UI 'error'.
+   * 9. End (no explicit return on the success path; method finishes).
+   */
   private handleSurveySubmit = async (event: any) => {
 
     const survey = event.detail.survey;
