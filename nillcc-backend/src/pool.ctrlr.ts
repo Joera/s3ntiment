@@ -75,7 +75,11 @@ export class PoolController {
         console.log('- pkpDid:', pkpDid);
         console.log('- groupId:', groupId);
 
-        return { pkpId: pkpAddress, pkpDid, groupId };
+        // Normalize groupId to a string: the real Lit SDK returns group_id as a
+        // NUMBER, but the repo-wide contract (shared zod schema + downstream
+        // types + FE pool config) types groupId as a string. Normalizing here
+        // keeps the API response contract-correct without weakening the schema.
+        return { pkpId: pkpAddress, pkpDid, groupId: String(groupId) };
     }
 
     async update(body: any) {

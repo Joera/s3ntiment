@@ -30,6 +30,9 @@ describe('validatePoolCreateOutput', () => {
   it('rejects missing groupId', () => {
     assertFieldNamed(() => validatePoolCreateOutput({ pkpId: '0xpkp', pkpDid: 'did:pkp:1' }), 'groupId');
   });
+  it('rejects a NUMBER groupId (locks the string contract — the real Lit SDK returns a number)', () => {
+    assertFieldNamed(() => validatePoolCreateOutput({ pkpId: '0xpkp', pkpDid: 'did:pkp:1', groupId: 12345 }), 'groupId');
+  });
 });
 
 describe('validateSurveyCreateOutput / validateSurveyUpdateOutput', () => {
