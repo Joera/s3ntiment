@@ -79,6 +79,13 @@ export interface EncryptedConfig {
     encryptedForOwner: EncryptedData
     encryptedForRespondent: EncryptedData
     encryptedScoring: string
+    // The pool's respondent-safe crypto identity (safe/pkpId/pkpDid/groupId).
+    // Persisted into the uploaded config by the backend create()/update() so a
+    // respondent can source pkpId from the decrypted EncryptedConfig (there is
+    // no other read path exposing it for a non-creating respondent). Optional so
+    // stale pre-fix surveys (which lack it) remain loadable as a clear error
+    // rather than a cryptic deref crash.
+    poolConfig?: PoolConfig
     queryIds?: string[]
     isScored: boolean,
     createdAt?: number

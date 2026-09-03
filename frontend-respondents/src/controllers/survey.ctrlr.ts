@@ -20,11 +20,12 @@ export class SurveyController {
   surveyId: string;
   survey?: Survey;
   /**
-   * Pool config (pkpId/pkpDid/…) used to submit a response. It is NOT a plain
-   * store lookup — it is persisted inside the decrypted EncryptedConfig (the
-   * same `config` field the backend reads as `surveyConfig.config`), so it is
-   * plumbed out of the decrypted survey in render() rather than read off an
-   * unset `this.pool`.
+   * Pool config (pkpId/pkpDid/…) used to submit a response. It is sourced from
+   * the decrypted EncryptedConfig's `poolConfig` field (persisted into the
+   * survey by the backend at create/update time). There is NO other
+   * authoritative read path exposing pkpId to a respondent, so it is plumbed
+   * out of the decrypted survey in render() rather than read off an unset
+   * `this.pool`.
    */
   poolConfig?: PoolConfig;
 
@@ -82,17 +83,21 @@ export class SurveyController {
       this.renderLoading();
 
       try {
+        // The shared helper derives poolConfig internally from the decrypted
+        // EncryptedConfig (which now carries poolConfig.pkpId), so render() no
+        // longer passes an undefined `this.poolConfig` that made the decrypt
+        // deref crash.
         const survey = await fetchAndDecryptSurveyWithRespondent(
-          this.services, surveyStore, this.surveyId, this.poolConfig, BACKENDURL
+          this.services, surveyStore, this.surveyId, BACKENDURL
         );
 
         this.survey = survey;
 
-        // R1 fix: the pool config lives on the decrypted EncryptedConfig, not on
-        // a separately-set `this.pool`. Plumb it out so setSurveyListener() can
-        // dereference poolConfig.pkpId/pkpDid instead of always throwing on an
-        // unset pool.
-        this.poolConfig = (survey as any).config as PoolConfig | undefined;
+        // The REAL PoolConfig rides on the decrypted survey (the EncryptedConfig
+        // is spread flat onto the return). Source pkpId/pkpDid from there so
+        // setSurveyListener() can dereference poolConfig.safe/pkpId/pkpDid
+        // instead of always throwing on an unset pool.
+        this.poolConfig = survey.poolConfig;
 
         survey.isScored = isScored(survey.groups);
         store.setSurveyData(this.surveyId, survey);

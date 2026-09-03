@@ -65,6 +65,7 @@ export class SurveyController {
 
         const config: EncryptedConfig = {
             ...surveyConfig,
+            poolConfig,           // respondent-safe pool identity (safe/pkpId/pkpDid/groupId)
             queryIds,
             nilDid: this.nildb.builderDid.didString,
             encryptedForOwner,
@@ -101,6 +102,7 @@ export class SurveyController {
             encryptedForOwner,
             encryptedForRespondent,
             encryptedScoring,
+            poolConfig,           // respondent-safe pool identity (safe/pkpId/pkpDid/groupId)
             queryIds: survey.queryIds,
             isScored: _isScored
         }

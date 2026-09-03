@@ -56,8 +56,10 @@ const PKP_DID = 'did:pkp:123';
 const RESPONDENT_ADDR = '0x00000000000000000000000000000000000000aa';
 
 // A decrypted survey shaped like the real EncryptedConfig return: it carries
-// the pool config (pkpId/pkpDid/…) on `config`, exactly as the backend reads it
-// (nillcc-backend/src/survey.ctrlr.ts: `const { pkpId, pkpDid } = surveyConfig.config`).
+// the pool config (pkpId/pkpDid/…) on `poolConfig`, the field the backend
+// persists into the uploaded config and the shared helper returns spread flat
+// onto the survey (nillcc-backend/src/survey.ctrlr.ts persists `poolConfig`;
+// shared/src/shared/survey/survey.factory.ts spreads `...config`).
 const DECRYPTED_SURVEY = {
   id: SURVEY_ID,
   pool: POOL_ID,
@@ -78,7 +80,7 @@ const DECRYPTED_SURVEY = {
       ],
     },
   ],
-  config: { pkpId: PKP_ID, pkpDid: PKP_DID, chainId: 8453, litNetwork: 'datil-dev' },
+  poolConfig: { pkpId: PKP_ID, pkpDid: PKP_DID, chainId: 8453, litNetwork: 'datil-dev' },
 };
 
 function fakeServices() {
@@ -146,27 +148,27 @@ describe('SurveyController.render()', () => {
     expect((globalThis as any).__surveyGetListener('survey-complete')).toBeUndefined();
   });
 
-  it('loads and renders the survey on the success path (R1 fix makes it reachable)', async () => {
+  it('loads and renders the survey on the success path, sourcing poolConfig from the decrypted survey', async () => {
     primeStore();
-    // config known before decrypt (e.g. from a prior fetch) is forwarded to the
-    // shared decrypt fn; after decrypt the controller re-plumbs it from the
-    // decrypted EncryptedConfig's `config` field.
-    const knownPoolConfig = { pkpId: '0xpre', pkpDid: 'did:pkp:pre' };
-
+    // No poolConfig is pre-seeded — the shared decrypt helper derives it
+    // internally from the parsed EncryptedConfig, so a fresh controller's
+    // render() must not forward an (undefined) `this.poolConfig` anymore.
     const ctrl = new SurveyController(fakeServices(), SURVEY_ID);
-    (ctrl as any).poolConfig = knownPoolConfig;
     const persistSpy = vi.spyOn(store, 'persistSurveys');
 
     await ctrl.render();
 
-    // shared decrypt fn called with (services, surveyStore, surveyId, poolConfig, backendUrl)
+    // shared decrypt fn called with the NEW 4-arg signature
+    // (services, surveyStore, surveyId, backendUrl) — NO caller poolConfig arg.
     expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       SURVEY_ID,
-      knownPoolConfig,
       undefined,
     );
+    // Assert the call is exactly 4 args (no trailing undefined poolConfig).
+    const callArgs = vi.mocked(fetchAndDecryptSurveyWithRespondent).mock.calls[0];
+    expect(callArgs).toHaveLength(4);
 
     // decrypted content + scoring persisted to the store
     expect(isScored).toHaveBeenCalledWith(DECRYPTED_SURVEY.groups);
@@ -178,7 +180,7 @@ describe('SurveyController.render()', () => {
     });
     expect(persistSpy).toHaveBeenCalled();
 
-    // R1 fix: pool config plumbed out of the decrypted config
+    // the REAL PoolConfig rides on the decrypted survey (survey.poolConfig)
     expect((ctrl as any).poolConfig).toMatchObject({
       pkpId: PKP_ID,
       pkpDid: PKP_DID,
@@ -401,54 +403,38 @@ describe('SurveyController.destroy() / process()', () => {
   });
 });
 
-describe('SurveyController cold-start regression (R1 pool-config gap), pinned', () => {
-  // This suite DOCUMENTS the known, intentionally-deferred chicken-and-egg
-  // described in SPEC-frontend-respondents.md Gaps: on a FRESH controller's
-  // first render() `this.poolConfig` is still undefined when forwarded into
-  // fetchAndDecryptSurveyWithRespondent. The real shared fn derefs
-  // `poolConfig.pkpId`, so the first render throws and lands in renderWarning.
-  // We pin that CURRENT behaviour here so it cannot silently change while the
-  // human resolution (source poolConfig before first decrypt) is still pending.
-  // We deliberately do NOT pre-seed (ctrl as any).poolConfig and do NOT fix the
-  // gap — the shared-fn mock below replicates the real deref-on-undefined so the
-  // test exercises the same failure path production would.
-  it('fresh controller + un-seeded poolConfig -> renderWarning, no navigate, no renderTemplate', async () => {
+describe('SurveyController cold-start (pool config sourced from the decrypted survey)', () => {
+  // This suite documents the R1 pool-config gap being FIXED: on a fresh
+  // controller's first render() `this.poolConfig` is unset, but the shared
+  // decrypt helper now derives poolConfig internally from the parsed
+  // EncryptedConfig — so a cold render succeeds instead of throwing on
+  // `Cannot read properties of undefined (reading 'pkpId')`.
+  it('fresh controller with no seeded poolConfig still loads: helper derives poolConfig from the survey', async () => {
     primeStore();
-    // Replicate the real shared decrypt fn: it dereferences poolConfig.pkpId,
-    // so an undefined poolConfig throws exactly like production on a fresh
-    // controller's first render.
-    h.decryptImpl.current = (...args: any[]) => {
-      const poolConfig = args[3];
-      if (!poolConfig) {
-        throw new Error("Cannot read properties of undefined (reading 'pkpId')");
-      }
-      return DECRYPTED_SURVEY;
-    };
+    // Replicate the real shared decrypt fn contract: it no longer receives a
+    // caller-supplied poolConfig; it returns a survey carrying poolConfig.
+    h.decryptImpl.current = async () => DECRYPTED_SURVEY;
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const ctrl = new SurveyController(fakeServices(), SURVEY_ID);
-    // NOTE: intentionally no `(ctrl as any).poolConfig = ...` here — that is
-    // exactly the deferred R1 gap we are pinning.
+    // NOTE: intentionally no `(ctrl as any).poolConfig = ...` — that was the
+    // deferred R1 gap; the fix removes the need to seed it.
     await ctrl.render();
 
     const app: any = (globalThis as any).document.querySelector('#app');
 
-    // landed in renderWarning, not renderTemplate.
-    expect(app.innerHTML).toContain('Decryption failed');
-    expect(app.innerHTML).not.toContain('survey-questions');
+    // landed in renderTemplate, not renderWarning.
+    expect(app.innerHTML).toContain('survey-questions');
+    expect(app.innerHTML).not.toContain('Decryption failed');
 
-    // fetch attempted with undefined poolConfig (the gap) then rejected
-    expect(fetchAndDecryptSurveyWithRespondent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      SURVEY_ID,
-      undefined,
-      undefined,
-    );
+    // the REAL PoolConfig was sourced from the decrypted survey
+    expect((ctrl as any).poolConfig).toMatchObject({
+      pkpId: PKP_ID,
+      pkpDid: PKP_DID,
+    });
 
-    // no navigation and no submission listener were reached
-    expect(router.navigate).not.toHaveBeenCalled();
-    expect((globalThis as any).__surveyGetListener('survey-complete')).toBeUndefined();
-    expect(consoleError).toHaveBeenCalled();
+    // no error surfaced, and the submission listener was registered
+    expect(consoleError).not.toHaveBeenCalled();
+    expect((globalThis as any).__surveyGetListener('survey-complete')).toBeDefined();
   });
 });
