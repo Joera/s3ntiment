@@ -38,7 +38,11 @@ function fakeDeps() {
     createPkp: vi.fn(async () => 'pkp-address'),
     getActionCid: vi.fn(async (a: any) => `cid:${String(a)}`),
     registerAction: vi.fn(async (cid: any, name: any) => ({ hashedCid: `h:${name}` })),
-    createGroup: vi.fn(async (..._args: any[]) => ({ group_id: 'group-1' })),
+    // The REAL Lit SDK returns group_id as a NUMBER. Stubbing it as a string
+    // here would mask the producer's real output type and keep the suite green
+    // even though the FE zod contract requires groupId to be a string. Use a
+    // number so the regression actually bites.
+    createGroup: vi.fn(async (..._args: any[]) => ({ group_id: 12345 })),
     createUsageKey: vi.fn(async () => ({ usage_api_key: 'usage-key-1' })),
     executeAction: vi.fn(async () => ({
       response: { publicKey: '0xPubKey' },
@@ -91,7 +95,10 @@ describe('PoolController.create', () => {
     expect(deps.lit.executeAction).toHaveBeenCalledTimes(1);
     expect(publicKeyToDidKey).toHaveBeenCalledWith('0xPubKey');
 
-    expect(result).toEqual({ pkpId: 'pkp-address', pkpDid: 'did:key:pkp', groupId: 'group-1' });
+    // groupId is normalized to a string at the producer boundary even though
+    // the mocked Lit SDK returned a NUMBER (12345).
+    expect(result).toEqual({ pkpId: 'pkp-address', pkpDid: 'did:key:pkp', groupId: '12345' });
+    expect(result.groupId).toBe('12345');
   });
 
   it('returns a missing-poolId string and does no work when poolId is absent (400-class guard)', async () => {
